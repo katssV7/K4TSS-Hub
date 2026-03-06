@@ -1196,11 +1196,16 @@ local function StartInfiniteJump()
     ijToggleBtn.BackgroundColor3 = ACCENT2
     ijStatusLabel.Text = "ON ✔"; ijStatusLabel.TextColor3 = GREEN
 
-    -- Listen ke UserInputService setiap kali Space ditekan
+    -- Hanya jump jika karakter sudah di udara (bukan di tanah)
+    -- Sehingga jump pertama normal, lompatan berikutnya adalah infinite jump
     ijConnection = UserInputService.JumpRequest:Connect(function()
         if not infiniteJumpActive then return end
         local hum = GetHumanoid()
-        if hum and hum:GetState() ~= Enum.HumanoidStateType.Dead then
+        if not hum then return end
+        local state = hum:GetState()
+        -- Hanya aktif saat di udara (Freefall atau Jumping)
+        if state == Enum.HumanoidStateType.Freefall
+        or state == Enum.HumanoidStateType.Jumping then
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
         end
     end)
@@ -1210,19 +1215,25 @@ ijToggleBtn.MouseButton1Click:Connect(function()
     if infiniteJumpActive then StopInfiniteJump() else StartInfiniteJump() end
 end)
 
--- Stop saat respawn
-LocalPlayer.CharacterAdded:Connect(function()
-    if infiniteJumpActive then
-        -- Reconnect ke karakter baru
-        if ijConnection then ijConnection:Disconnect(); ijConnection = nil end
-        ijConnection = UserInputService.JumpRequest:Connect(function()
-            if not infiniteJumpActive then return end
-            local hum = GetHumanoid()
-            if hum and hum:GetState() ~= Enum.HumanoidStateType.Dead then
-                hum:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end)
-    end
+-- Reconnect ke karakter baru saat respawn
+local function ReconnectIJ(char)
+    if not infiniteJumpActive then return end
+    if ijConnection then ijConnection:Disconnect(); ijConnection = nil end
+    ijConnection = UserInputService.JumpRequest:Connect(function()
+        if not infiniteJumpActive then return end
+        local hum = GetHumanoid()
+        if not hum then return end
+        local state = hum:GetState()
+        if state == Enum.HumanoidStateType.Freefall
+        or state == Enum.HumanoidStateType.Jumping then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    ReconnectIJ(char)
 end)
 
 -- ─── PRESET BUTTONS ───
