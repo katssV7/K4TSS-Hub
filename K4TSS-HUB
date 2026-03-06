@@ -1411,9 +1411,237 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 -- ════════════════════════════════════════
+--    WORLD TAB (Time & Lighting)
+-- ════════════════════════════════════════
+local WorldTab = NewTab("World", 4)
+
+local Lighting = game:GetService("Lighting")
+
+-- Header
+local wldHeaderRow = MakeRow(WorldTab, 1, 40)
+wldHeaderRow.BackgroundColor3 = Color3.fromRGB(28,28,28)
+local wldHeaderLabel = Instance.new("TextLabel", wldHeaderRow)
+wldHeaderLabel.Text = "🌍  Time & Lighting"
+wldHeaderLabel.Size = UDim2.new(1,-10,1,0); wldHeaderLabel.Position = UDim2.new(0,10,0,0)
+wldHeaderLabel.BackgroundTransparency = 1; wldHeaderLabel.TextColor3 = TEXTW
+wldHeaderLabel.Font = Enum.Font.GothamBold; wldHeaderLabel.TextSize = 11
+wldHeaderLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- ─── TIME OF DAY ───
+local timeRow = MakeRow(WorldTab, 2, 54)
+local timeLbl = Instance.new("TextLabel", timeRow)
+timeLbl.Text = "🕐  Time of Day"
+timeLbl.Size = UDim2.new(0,110,0,18); timeLbl.Position = UDim2.new(0,10,0,5)
+timeLbl.BackgroundTransparency = 1; timeLbl.TextColor3 = TEXTW
+timeLbl.Font = Enum.Font.GothamSemibold; timeLbl.TextSize = 11
+timeLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local timeValLbl = Instance.new("TextLabel", timeRow)
+timeValLbl.Text = "12:00"
+timeValLbl.Size = UDim2.new(0,50,0,18); timeValLbl.Position = UDim2.new(0,118,0,5)
+timeValLbl.BackgroundTransparency = 1; timeValLbl.TextColor3 = GOLD
+timeValLbl.Font = Enum.Font.GothamBold; timeValLbl.TextSize = 12
+timeValLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Slider waktu (0-24 jam)
+local timeTrack = Instance.new("Frame", timeRow)
+timeTrack.Size = UDim2.new(1,-24,0,6); timeTrack.Position = UDim2.new(0,12,0,36)
+timeTrack.BackgroundColor3 = Color3.fromRGB(50,50,50); timeTrack.BorderSizePixel = 0
+Instance.new("UICorner", timeTrack).CornerRadius = UDim.new(1,0)
+
+-- Gradient siang-malam di track
+local timeGrad = Instance.new("UIGradient", timeTrack)
+timeGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,    Color3.fromRGB(20,20,60)),    -- tengah malam
+    ColorSequenceKeypoint.new(0.25, Color3.fromRGB(255,160,60)),  -- subuh
+    ColorSequenceKeypoint.new(0.5,  Color3.fromRGB(120,180,255)), -- siang
+    ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255,120,40)),  -- sore
+    ColorSequenceKeypoint.new(1,    Color3.fromRGB(20,20,60)),    -- malam
+})
+
+local timeFill = Instance.new("Frame", timeTrack)
+timeFill.Size = UDim2.new(0.5,0,1,0)
+timeFill.BackgroundTransparency = 1; timeFill.BorderSizePixel = 0
+
+local timeThumb = Instance.new("TextButton", timeTrack)
+timeThumb.Size = UDim2.new(0,16,0,16); timeThumb.AnchorPoint = Vector2.new(0.5,0.5)
+timeThumb.Position = UDim2.new(0.5,0,0.5,0)
+timeThumb.BackgroundColor3 = TEXTW; timeThumb.Text = ""; timeThumb.BorderSizePixel = 0; timeThumb.ZIndex = 10
+Instance.new("UICorner", timeThumb).CornerRadius = UDim.new(1,0)
+
+local function SetTimeOfDay(hour)
+    hour = math.clamp(hour, 0, 24)
+    Lighting.TimeOfDay = string.format("%02d:%02d:%02d", math.floor(hour), math.floor((hour % 1) * 60), 0)
+    local h = math.floor(hour)
+    local m = math.floor((hour % 1) * 60)
+    timeValLbl.Text = string.format("%02d:%02d", h, m)
+    local rel = hour / 24
+    timeThumb.Position = UDim2.new(rel,0,0.5,0)
+end
+
+local timeDragging = false
+timeThumb.MouseButton1Down:Connect(function() timeDragging = true end)
+timeThumb.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch then timeDragging = true end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then timeDragging = false end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not timeDragging then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseMovement
+    and i.UserInputType ~= Enum.UserInputType.Touch then return end
+    local rel = math.clamp((i.Position.X - timeTrack.AbsolutePosition.X) / timeTrack.AbsoluteSize.X, 0, 1)
+    SetTimeOfDay(rel * 24)
+end)
+
+-- Time preset buttons
+local timePresetRow = MakeRow(WorldTab, 3, 34)
+timePresetRow.BackgroundColor3 = Color3.fromRGB(24,24,24)
+local tpLbl = Instance.new("TextLabel", timePresetRow)
+tpLbl.Text = "Preset:"; tpLbl.Size = UDim2.new(0,46,1,0); tpLbl.Position = UDim2.new(0,10,0,0)
+tpLbl.BackgroundTransparency = 1; tpLbl.TextColor3 = TEXTG
+tpLbl.Font = Enum.Font.Gotham; tpLbl.TextSize = 10; tpLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local function MakeTimeBtn(label, hour, xOff, color)
+    local btn = MakeSmallBtn(timePresetRow, label, color, UDim2.new(0,xOff,0.5,-11), nil, 52, 22)
+    btn.MouseButton1Click:Connect(function() SetTimeOfDay(hour) end)
+end
+MakeTimeBtn("🌙 Mlm",   0,  58, Color3.fromRGB(30,30,80))
+MakeTimeBtn("🌅 Subuh", 6,  114, Color3.fromRGB(180,90,30))
+MakeTimeBtn("☀ Siang", 12, 170, Color3.fromRGB(180,140,20))
+MakeTimeBtn("🌆 Sore",  17, 226, Color3.fromRGB(180,70,20))
+MakeTimeBtn("🌃 Malam", 20, 282, Color3.fromRGB(20,20,80))
+
+-- ─── BRIGHTNESS ───
+local brightRow = MakeRow(WorldTab, 4, 54)
+local brightLbl = Instance.new("TextLabel", brightRow)
+brightLbl.Text = "💡  Brightness"
+brightLbl.Size = UDim2.new(0,110,0,18); brightLbl.Position = UDim2.new(0,10,0,5)
+brightLbl.BackgroundTransparency = 1; brightLbl.TextColor3 = TEXTW
+brightLbl.Font = Enum.Font.GothamSemibold; brightLbl.TextSize = 11
+brightLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local brightValLbl = Instance.new("TextLabel", brightRow)
+brightValLbl.Text = "2"
+brightValLbl.Size = UDim2.new(0,40,0,18); brightValLbl.Position = UDim2.new(0,118,0,5)
+brightValLbl.BackgroundTransparency = 1; brightValLbl.TextColor3 = GOLD
+brightValLbl.Font = Enum.Font.GothamBold; brightValLbl.TextSize = 12
+brightValLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local brightTrack = Instance.new("Frame", brightRow)
+brightTrack.Size = UDim2.new(1,-24,0,6); brightTrack.Position = UDim2.new(0,12,0,36)
+brightTrack.BackgroundColor3 = Color3.fromRGB(50,50,50); brightTrack.BorderSizePixel = 0
+Instance.new("UICorner", brightTrack).CornerRadius = UDim.new(1,0)
+
+local brightFill = Instance.new("Frame", brightTrack)
+brightFill.Size = UDim2.new(2/10,0,1,0)
+brightFill.BackgroundColor3 = GOLD; brightFill.BorderSizePixel = 0
+Instance.new("UICorner", brightFill).CornerRadius = UDim.new(1,0)
+
+local brightThumb = Instance.new("TextButton", brightTrack)
+brightThumb.Size = UDim2.new(0,16,0,16); brightThumb.AnchorPoint = Vector2.new(0.5,0.5)
+brightThumb.Position = UDim2.new(2/10,0,0.5,0)
+brightThumb.BackgroundColor3 = TEXTW; brightThumb.Text = ""; brightThumb.BorderSizePixel = 0; brightThumb.ZIndex = 10
+Instance.new("UICorner", brightThumb).CornerRadius = UDim.new(1,0)
+
+local brightDragging = false
+brightThumb.MouseButton1Down:Connect(function() brightDragging = true end)
+brightThumb.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch then brightDragging = true end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then brightDragging = false end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not brightDragging then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseMovement
+    and i.UserInputType ~= Enum.UserInputType.Touch then return end
+    local rel = math.clamp((i.Position.X - brightTrack.AbsolutePosition.X) / brightTrack.AbsoluteSize.X, 0, 1)
+    local val = math.floor(rel * 10 * 10) / 10
+    brightFill.Size = UDim2.new(rel,0,1,0); brightThumb.Position = UDim2.new(rel,0,0.5,0)
+    brightValLbl.Text = tostring(val)
+    Lighting.Brightness = val
+end)
+
+-- ─── FOG ───
+local fogRow = MakeRow(WorldTab, 5, 54)
+local fogLbl = Instance.new("TextLabel", fogRow)
+fogLbl.Text = "🌫  Fog"
+fogLbl.Size = UDim2.new(0,110,0,18); fogLbl.Position = UDim2.new(0,10,0,5)
+fogLbl.BackgroundTransparency = 1; fogLbl.TextColor3 = TEXTW
+fogLbl.Font = Enum.Font.GothamSemibold; fogLbl.TextSize = 11
+fogLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local fogValLbl = Instance.new("TextLabel", fogRow)
+fogValLbl.Text = "100k"
+fogValLbl.Size = UDim2.new(0,50,0,18); fogValLbl.Position = UDim2.new(0,118,0,5)
+fogValLbl.BackgroundTransparency = 1; fogValLbl.TextColor3 = GOLD
+fogValLbl.Font = Enum.Font.GothamBold; fogValLbl.TextSize = 12
+fogValLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local fogTrack = Instance.new("Frame", fogRow)
+fogTrack.Size = UDim2.new(1,-24,0,6); fogTrack.Position = UDim2.new(0,12,0,36)
+fogTrack.BackgroundColor3 = Color3.fromRGB(50,50,50); fogTrack.BorderSizePixel = 0
+Instance.new("UICorner", fogTrack).CornerRadius = UDim.new(1,0)
+
+local fogFill = Instance.new("Frame", fogTrack)
+fogFill.Size = UDim2.new(1,0,1,0)
+fogFill.BackgroundColor3 = Color3.fromRGB(150,200,220); fogFill.BorderSizePixel = 0
+Instance.new("UICorner", fogFill).CornerRadius = UDim.new(1,0)
+
+local fogThumb = Instance.new("TextButton", fogTrack)
+fogThumb.Size = UDim2.new(0,16,0,16); fogThumb.AnchorPoint = Vector2.new(0.5,0.5)
+fogThumb.Position = UDim2.new(1,0,0.5,0)
+fogThumb.BackgroundColor3 = TEXTW; fogThumb.Text = ""; fogThumb.BorderSizePixel = 0; fogThumb.ZIndex = 10
+Instance.new("UICorner", fogThumb).CornerRadius = UDim.new(1,0)
+
+-- Fog end: slider kiri = kabut tebal (dekat), kanan = tidak ada kabut (jauh)
+local function FormatFog(val)
+    if val >= 1000 then return math.floor(val/1000).."k" else return tostring(math.floor(val)) end
+end
+
+local fogDragging = false
+fogThumb.MouseButton1Down:Connect(function() fogDragging = true end)
+fogThumb.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch then fogDragging = true end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then fogDragging = false end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not fogDragging then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseMovement
+    and i.UserInputType ~= Enum.UserInputType.Touch then return end
+    local rel = math.clamp((i.Position.X - fogTrack.AbsolutePosition.X) / fogTrack.AbsoluteSize.X, 0, 1)
+    -- rel 0 = 50 (kabut sangat tebal), rel 1 = 100000 (tidak ada kabut)
+    local val = math.floor(50 + (rel ^ 2) * 99950)
+    fogFill.Size = UDim2.new(rel,0,1,0); fogThumb.Position = UDim2.new(rel,0,0.5,0)
+    fogValLbl.Text = FormatFog(val)
+    Lighting.FogEnd = val
+end)
+
+-- ─── RESET LIGHTING ───
+local wldResetRow = MakeRow(WorldTab, 6, 34)
+wldResetRow.BackgroundColor3 = Color3.fromRGB(26,26,26)
+local wldResetBtn = MakeSmallBtn(wldResetRow, "🔄 Reset Lighting ke Default", Color3.fromRGB(55,55,55), UDim2.new(0.5,-85,0.5,-11), nil, 170, 22)
+wldResetBtn.MouseButton1Click:Connect(function()
+    SetTimeOfDay(14)
+    Lighting.Brightness = 2
+    Lighting.FogEnd     = 100000
+    brightValLbl.Text = "2"
+    brightFill.Size = UDim2.new(2/10,0,1,0); brightThumb.Position = UDim2.new(2/10,0,0.5,0)
+    fogValLbl.Text = "100k"
+    fogFill.Size = UDim2.new(1,0,1,0); fogThumb.Position = UDim2.new(1,0,0.5,0)
+end)
+
+-- ════════════════════════════════════════
 --    SETTINGS TAB
 -- ════════════════════════════════════════
-local SettingsTab = NewTab("Settings", 4)
+local SettingsTab = NewTab("Settings", 5)
 
 MakeSecHeader(SettingsTab, "DATA", 1)
 
@@ -1485,10 +1713,10 @@ RefreshWaypointPanel()
 task.spawn(function()
     task.wait(0.5)
     pcall(function()
-        local saveMsg = canSaveFile and "Auto-save aktif (file)." or "Auto-save: in-memory."
+        local saveMsg = canSaveFile and "Script Universal by K4TSS (file)." or "Script Universal by K4TSS."
         StarterGui:SetCore("SendNotification", {
             Title    = "K4TSS V2.0",
-            Text     = "Waypoint Hub loaded! " .. saveMsg,
+            Text     = "Hub loaded! " .. saveMsg,
             Duration = 5,
         })
     end)
