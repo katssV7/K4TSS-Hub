@@ -846,11 +846,11 @@ local function RefreshPlayerList()
             local char = player.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             if hrp then
-                -- Offset 4 studs ke samping agar tidak nabrak karakter target
+                -- Offset 4 studs ke samping mengikuti arah hadap player target
                 local targetCF = hrp.CFrame * CFrame.new(4, 0, 0)
-                TeleportTo(targetCF.X, targetCF.Y - 3, targetCF.Z)
+                TeleportTo(targetCF.X, targetCF.Y, targetCF.Z)
             else
-                plrCountLabel.Text = "⚠ " .. player.Name .. " sedang respawn!"
+                plrCountLabel.Text = "⚠ " .. player.Name .. " sedang respawn, coba lagi!"
                 plrCountLabel.TextColor3 = GOLD
                 task.delay(2, function()
                     plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
