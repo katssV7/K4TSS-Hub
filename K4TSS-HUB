@@ -1015,7 +1015,6 @@ end)
 local SpeedTab = NewTab("Speed", 3)
 
 local DEFAULT_SPEED = 16
-local DEFAULT_JUMP  = 50
 
 local function GetHumanoid()
     local c = LocalPlayer.Character
@@ -1027,18 +1026,12 @@ local function ApplySpeed(val)
     if hum then hum.WalkSpeed = val end
 end
 
-local function ApplyJump(val)
-    local hum = GetHumanoid()
-    if hum then hum.JumpPower = val end
-end
-
 -- Re-apply saat respawn
 LocalPlayer.CharacterAdded:Connect(function(char)
     task.wait(0.5)
     local hum = char:WaitForChild("Humanoid", 5)
     if not hum then return end
     hum.WalkSpeed = DEFAULT_SPEED
-    hum.JumpPower  = DEFAULT_JUMP
 end)
 
 -- Header
@@ -1166,40 +1159,70 @@ speedResetBtn.MouseButton1Click:Connect(function()
     ApplySpeed(16)
 end)
 
--- ─── JUMP SLIDER ───
-local jumpRow, jumpValLbl, jumpFill, jumpThumb, jumpInp, jumpSetBtn, jumpResetBtn, jumpTrack, jumpUpdate =
-    MakeSliderRow(SpeedTab, 3, "🦘", "JumpPower", 50, 500, GREEN)
+-- ─── INFINITE JUMP ───
+local ijRow = MakeRow(SpeedTab, 3, 44)
+ijRow.BackgroundColor3 = Color3.fromRGB(24,24,24)
 
-local jumpDragging = false
-jumpThumb.MouseButton1Down:Connect(function() jumpDragging = true end)
-jumpThumb.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.Touch then jumpDragging = true end
+local ijLabel = Instance.new("TextLabel", ijRow)
+ijLabel.Text = "🦘  Infinite Jump"
+ijLabel.Size = UDim2.new(0.55,0,1,0); ijLabel.Position = UDim2.new(0,10,0,0)
+ijLabel.BackgroundTransparency = 1; ijLabel.TextColor3 = TEXTW
+ijLabel.Font = Enum.Font.GothamBold; ijLabel.TextSize = 11
+ijLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local ijStatusLabel = Instance.new("TextLabel", ijRow)
+ijStatusLabel.Text = "OFF"
+ijStatusLabel.Size = UDim2.new(0,40,1,0); ijStatusLabel.Position = UDim2.new(0.55,0,0,0)
+ijStatusLabel.BackgroundTransparency = 1; ijStatusLabel.TextColor3 = TEXTD
+ijStatusLabel.Font = Enum.Font.GothamBold; ijStatusLabel.TextSize = 11
+ijStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local ijToggleBtn = MakeSmallBtn(ijRow, "▶ ON", Color3.fromRGB(40,160,60), UDim2.new(1,-86,0.5,-13), nil, 78, 26)
+
+local infiniteJumpActive = false
+local ijConnection = nil
+
+local function StopInfiniteJump()
+    infiniteJumpActive = false
+    if ijConnection then ijConnection:Disconnect(); ijConnection = nil end
+    ijToggleBtn.Text = "▶ ON"
+    ijToggleBtn.BackgroundColor3 = Color3.fromRGB(40,160,60)
+    ijStatusLabel.Text = "OFF"; ijStatusLabel.TextColor3 = TEXTD
+end
+
+local function StartInfiniteJump()
+    infiniteJumpActive = true
+    ijToggleBtn.Text = "■ OFF"
+    ijToggleBtn.BackgroundColor3 = ACCENT2
+    ijStatusLabel.Text = "ON ✔"; ijStatusLabel.TextColor3 = GREEN
+
+    -- Listen ke UserInputService setiap kali Space ditekan
+    ijConnection = UserInputService.JumpRequest:Connect(function()
+        if not infiniteJumpActive then return end
+        local hum = GetHumanoid()
+        if hum and hum:GetState() ~= Enum.HumanoidStateType.Dead then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end)
+end
+
+ijToggleBtn.MouseButton1Click:Connect(function()
+    if infiniteJumpActive then StopInfiniteJump() else StartInfiniteJump() end
 end)
-UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1
-    or i.UserInputType == Enum.UserInputType.Touch then jumpDragging = false end
-end)
-UserInputService.InputChanged:Connect(function(i)
-    if not jumpDragging then return end
-    if i.UserInputType ~= Enum.UserInputType.MouseMovement
-    and i.UserInputType ~= Enum.UserInputType.Touch then return end
-    local rel = math.clamp((i.Position.X - jumpTrack.AbsolutePosition.X) / jumpTrack.AbsoluteSize.X, 0, 1)
-    local val = math.max(1, math.floor(rel * 500))
-    jumpFill.Size = UDim2.new(rel,0,1,0); jumpThumb.Position = UDim2.new(rel,0,0.5,0)
-    jumpValLbl.Text = tostring(val); jumpInp.Text = tostring(val)
-    DEFAULT_JUMP = val; ApplyJump(val)
-end)
-jumpSetBtn.MouseButton1Click:Connect(function()
-    local val = math.clamp(tonumber(jumpInp.Text) or 50, 1, 1000)
-    DEFAULT_JUMP = val
-    local rel = math.clamp(val/500, 0, 1)
-    jumpFill.Size = UDim2.new(rel,0,1,0); jumpThumb.Position = UDim2.new(rel,0,0.5,0)
-    jumpValLbl.Text = tostring(val); ApplyJump(val)
-end)
-jumpResetBtn.MouseButton1Click:Connect(function()
-    DEFAULT_JUMP = 50; jumpInp.Text = "50"; jumpValLbl.Text = "50"
-    jumpFill.Size = UDim2.new(50/500,0,1,0); jumpThumb.Position = UDim2.new(50/500,0,0.5,0)
-    ApplyJump(50)
+
+-- Stop saat respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    if infiniteJumpActive then
+        -- Reconnect ke karakter baru
+        if ijConnection then ijConnection:Disconnect(); ijConnection = nil end
+        ijConnection = UserInputService.JumpRequest:Connect(function()
+            if not infiniteJumpActive then return end
+            local hum = GetHumanoid()
+            if hum and hum:GetState() ~= Enum.HumanoidStateType.Dead then
+                hum:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end)
+    end
 end)
 
 -- ─── PRESET BUTTONS ───
@@ -1210,31 +1233,29 @@ presetLbl.Text = "Preset:"; presetLbl.Size = UDim2.new(0,46,1,0); presetLbl.Posi
 presetLbl.BackgroundTransparency = 1; presetLbl.TextColor3 = TEXTG
 presetLbl.Font = Enum.Font.Gotham; presetLbl.TextSize = 10; presetLbl.TextXAlignment = Enum.TextXAlignment.Left
 
-local function ApplyPreset(speed, jump)
-    DEFAULT_SPEED = speed; DEFAULT_JUMP = jump
-    speedInp.Text = tostring(speed); jumpInp.Text = tostring(jump)
-    speedValLbl.Text = tostring(speed); jumpValLbl.Text = tostring(jump)
+local function ApplyPreset(speed)
+    DEFAULT_SPEED = speed
+    speedInp.Text = tostring(speed)
+    speedValLbl.Text = tostring(speed)
     speedFill.Size = UDim2.new(math.clamp(speed/200,0,1),0,1,0)
     speedThumb.Position = UDim2.new(math.clamp(speed/200,0,1),0,0.5,0)
-    jumpFill.Size  = UDim2.new(math.clamp(jump/500,0,1),0,1,0)
-    jumpThumb.Position  = UDim2.new(math.clamp(jump/500,0,1),0,0.5,0)
-    ApplySpeed(speed); ApplyJump(jump)
+    ApplySpeed(speed)
 end
 
 local p1 = MakeSmallBtn(presetRow, "Normal",  Color3.fromRGB(60,60,60),      UDim2.new(0, 58,0.5,-11), nil, 58, 22)
 local p2 = MakeSmallBtn(presetRow, "Fast",    BLUEDK,                         UDim2.new(0,120,0.5,-11), nil, 48, 22)
 local p3 = MakeSmallBtn(presetRow, "Super",   Color3.fromRGB(120,50,200),     UDim2.new(0,172,0.5,-11), nil, 48, 22)
 local p4 = MakeSmallBtn(presetRow, "MAX",     ACCENT2,                        UDim2.new(0,224,0.5,-11), nil, 40, 22)
-p1.MouseButton1Click:Connect(function() ApplyPreset(16,  50)  end)
-p2.MouseButton1Click:Connect(function() ApplyPreset(50,  100) end)
-p3.MouseButton1Click:Connect(function() ApplyPreset(100, 300) end)
-p4.MouseButton1Click:Connect(function() ApplyPreset(500, 999) end)
+p1.MouseButton1Click:Connect(function() ApplyPreset(16)  end)
+p2.MouseButton1Click:Connect(function() ApplyPreset(50)  end)
+p3.MouseButton1Click:Connect(function() ApplyPreset(100) end)
+p4.MouseButton1Click:Connect(function() ApplyPreset(500) end)
 
 -- ─── RESET ALL ───
 local resetAllRow = MakeRow(SpeedTab, 5, 34)
 resetAllRow.BackgroundColor3 = Color3.fromRGB(26,26,26)
-local resetAllBtn = MakeSmallBtn(resetAllRow, "🔄 Reset Semua ke Default", Color3.fromRGB(55,55,55), UDim2.new(0.5,-80,0.5,-11), nil, 160, 22)
-resetAllBtn.MouseButton1Click:Connect(function() ApplyPreset(16, 50) end)
+local resetAllBtn = MakeSmallBtn(resetAllRow, "🔄 Reset Speed ke Default", Color3.fromRGB(55,55,55), UDim2.new(0.5,-80,0.5,-11), nil, 160, 22)
+resetAllBtn.MouseButton1Click:Connect(function() ApplyPreset(16) end)
 
 -- ─── FLY TOGGLE ───
 local flyRow = MakeRow(SpeedTab, 6, 44)
