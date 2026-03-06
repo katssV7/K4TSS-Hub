@@ -332,6 +332,7 @@ DNo.MouseButton1Click:Connect(function() Dialog.Visible = false end)
 DYes.MouseButton1Click:Connect(function()
     SaveData()
     for i in pairs(loopThreads) do StopLoop(i) end
+    if flyActive then StopFly() end
     Dialog.Visible = false; Window.Visible = false
 end)
 
@@ -1004,9 +1005,376 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 -- ════════════════════════════════════════
+--    SPEED & JUMP TAB
+-- ════════════════════════════════════════
+
+
+-- ════════════════════════════════════════
+--    SPEED & JUMP TAB
+-- ════════════════════════════════════════
+local SpeedTab = NewTab("Speed", 3)
+
+local DEFAULT_SPEED = 16
+local DEFAULT_JUMP  = 50
+
+local function GetHumanoid()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function ApplySpeed(val)
+    local hum = GetHumanoid()
+    if hum then hum.WalkSpeed = val end
+end
+
+local function ApplyJump(val)
+    local hum = GetHumanoid()
+    if hum then hum.JumpPower = val end
+end
+
+-- Re-apply saat respawn
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.5)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if not hum then return end
+    hum.WalkSpeed = DEFAULT_SPEED
+    hum.JumpPower  = DEFAULT_JUMP
+end)
+
+-- Header
+local spHeaderRow = MakeRow(SpeedTab, 1, 40)
+spHeaderRow.BackgroundColor3 = Color3.fromRGB(28,28,28)
+local spHeaderLabel = Instance.new("TextLabel", spHeaderRow)
+spHeaderLabel.Text = "⚡  Speed & Jump"
+spHeaderLabel.Size = UDim2.new(1,-10,1,0); spHeaderLabel.Position = UDim2.new(0,10,0,0)
+spHeaderLabel.BackgroundTransparency = 1; spHeaderLabel.TextColor3 = TEXTW
+spHeaderLabel.Font = Enum.Font.GothamBold; spHeaderLabel.TextSize = 11
+spHeaderLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- ─── Helper: buat slider row ───
+local function MakeSliderRow(parent, lo, icon, label, defaultVal, maxVal, fillColor)
+    local row = MakeRow(parent, lo, 54)
+
+    local nameLbl = Instance.new("TextLabel", row)
+    nameLbl.Text = icon .. "  " .. label
+    nameLbl.Size = UDim2.new(0,100,0,18); nameLbl.Position = UDim2.new(0,10,0,5)
+    nameLbl.BackgroundTransparency = 1; nameLbl.TextColor3 = TEXTW
+    nameLbl.Font = Enum.Font.GothamSemibold; nameLbl.TextSize = 11
+    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local valLbl = Instance.new("TextLabel", row)
+    valLbl.Text = tostring(defaultVal)
+    valLbl.Size = UDim2.new(0,40,0,18); valLbl.Position = UDim2.new(0,112,0,5)
+    valLbl.BackgroundTransparency = 1; valLbl.TextColor3 = GOLD
+    valLbl.Font = Enum.Font.GothamBold; valLbl.TextSize = 12
+    valLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- Track
+    local track = Instance.new("Frame", row)
+    track.Size = UDim2.new(1,-24,0,6); track.Position = UDim2.new(0,12,0,36)
+    track.BackgroundColor3 = Color3.fromRGB(50,50,50); track.BorderSizePixel = 0
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1,0)
+
+    local fill = Instance.new("Frame", track)
+    local initRel = defaultVal / maxVal
+    fill.Size = UDim2.new(initRel,0,1,0)
+    fill.BackgroundColor3 = fillColor; fill.BorderSizePixel = 0
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1,0)
+
+    local thumb = Instance.new("TextButton", track)
+    thumb.Size = UDim2.new(0,16,0,16); thumb.AnchorPoint = Vector2.new(0.5,0.5)
+    thumb.Position = UDim2.new(initRel,0,0.5,0)
+    thumb.BackgroundColor3 = TEXTW; thumb.Text = ""; thumb.BorderSizePixel = 0; thumb.ZIndex = 10
+    Instance.new("UICorner", thumb).CornerRadius = UDim.new(1,0)
+
+    -- Input box
+    local inp = MakeInlineInput(row, tostring(defaultVal), UDim2.new(0,155,0,3), UDim2.new(0,44,0,20))
+    inp.Text = tostring(defaultVal)
+
+    -- Set & Reset buttons
+    local setBtn   = MakeSmallBtn(row, "Set",   fillColor,                   UDim2.new(0,203,0,5), nil, 32, 20)
+    local resetBtn = MakeSmallBtn(row, "Reset", Color3.fromRGB(55,55,55),    UDim2.new(1,-40,0,5), nil, 32, 20)
+
+    -- Slider drag (PC + Mobile)
+    local dragging = false
+    local function updateSlider(screenX)
+        local rel = (screenX - track.AbsolutePosition.X) / track.AbsoluteSize.X
+        rel = math.clamp(rel, 0, 1)
+        local val = math.max(1, math.floor(rel * maxVal))
+        fill.Size  = UDim2.new(rel,0,1,0)
+        thumb.Position = UDim2.new(rel,0,0.5,0)
+        valLbl.Text = tostring(val)
+        inp.Text    = tostring(val)
+        return val
+    end
+
+    thumb.MouseButton1Down:Connect(function() dragging = true end)
+    thumb.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch then dragging = true end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+
+    return row, valLbl, fill, thumb, inp, setBtn, resetBtn, track,
+        function(screenX) return updateSlider(screenX) end
+end
+
+-- ─── SPEED SLIDER ───
+local speedRow, speedValLbl, speedFill, speedThumb, speedInp, speedSetBtn, speedResetBtn, speedTrack, speedUpdate =
+    MakeSliderRow(SpeedTab, 2, "🏃", "WalkSpeed", 16, 200, BLUE)
+
+UserInputService.InputChanged:Connect(function(i)
+    if not (i.UserInputType == Enum.UserInputType.MouseMovement
+         or i.UserInputType == Enum.UserInputType.Touch) then return end
+    if speedThumb:IsDescendantOf(game) then
+        -- check drag state via closure — handled inside MakeSliderRow
+    end
+end)
+
+-- We use a simpler direct approach for each slider
+local speedDragging = false
+speedThumb.MouseButton1Down:Connect(function() speedDragging = true end)
+speedThumb.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch then speedDragging = true end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then speedDragging = false end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not speedDragging then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseMovement
+    and i.UserInputType ~= Enum.UserInputType.Touch then return end
+    local rel = math.clamp((i.Position.X - speedTrack.AbsolutePosition.X) / speedTrack.AbsoluteSize.X, 0, 1)
+    local val = math.max(1, math.floor(rel * 200))
+    speedFill.Size = UDim2.new(rel,0,1,0); speedThumb.Position = UDim2.new(rel,0,0.5,0)
+    speedValLbl.Text = tostring(val); speedInp.Text = tostring(val)
+    DEFAULT_SPEED = val; ApplySpeed(val)
+end)
+speedSetBtn.MouseButton1Click:Connect(function()
+    local val = math.clamp(tonumber(speedInp.Text) or 16, 1, 1000)
+    DEFAULT_SPEED = val
+    local rel = math.clamp(val/200, 0, 1)
+    speedFill.Size = UDim2.new(rel,0,1,0); speedThumb.Position = UDim2.new(rel,0,0.5,0)
+    speedValLbl.Text = tostring(val); ApplySpeed(val)
+end)
+speedResetBtn.MouseButton1Click:Connect(function()
+    DEFAULT_SPEED = 16; speedInp.Text = "16"; speedValLbl.Text = "16"
+    speedFill.Size = UDim2.new(16/200,0,1,0); speedThumb.Position = UDim2.new(16/200,0,0.5,0)
+    ApplySpeed(16)
+end)
+
+-- ─── JUMP SLIDER ───
+local jumpRow, jumpValLbl, jumpFill, jumpThumb, jumpInp, jumpSetBtn, jumpResetBtn, jumpTrack, jumpUpdate =
+    MakeSliderRow(SpeedTab, 3, "🦘", "JumpPower", 50, 500, GREEN)
+
+local jumpDragging = false
+jumpThumb.MouseButton1Down:Connect(function() jumpDragging = true end)
+jumpThumb.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch then jumpDragging = true end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then jumpDragging = false end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if not jumpDragging then return end
+    if i.UserInputType ~= Enum.UserInputType.MouseMovement
+    and i.UserInputType ~= Enum.UserInputType.Touch then return end
+    local rel = math.clamp((i.Position.X - jumpTrack.AbsolutePosition.X) / jumpTrack.AbsoluteSize.X, 0, 1)
+    local val = math.max(1, math.floor(rel * 500))
+    jumpFill.Size = UDim2.new(rel,0,1,0); jumpThumb.Position = UDim2.new(rel,0,0.5,0)
+    jumpValLbl.Text = tostring(val); jumpInp.Text = tostring(val)
+    DEFAULT_JUMP = val; ApplyJump(val)
+end)
+jumpSetBtn.MouseButton1Click:Connect(function()
+    local val = math.clamp(tonumber(jumpInp.Text) or 50, 1, 1000)
+    DEFAULT_JUMP = val
+    local rel = math.clamp(val/500, 0, 1)
+    jumpFill.Size = UDim2.new(rel,0,1,0); jumpThumb.Position = UDim2.new(rel,0,0.5,0)
+    jumpValLbl.Text = tostring(val); ApplyJump(val)
+end)
+jumpResetBtn.MouseButton1Click:Connect(function()
+    DEFAULT_JUMP = 50; jumpInp.Text = "50"; jumpValLbl.Text = "50"
+    jumpFill.Size = UDim2.new(50/500,0,1,0); jumpThumb.Position = UDim2.new(50/500,0,0.5,0)
+    ApplyJump(50)
+end)
+
+-- ─── PRESET BUTTONS ───
+local presetRow = MakeRow(SpeedTab, 4, 36)
+presetRow.BackgroundColor3 = Color3.fromRGB(24,24,24)
+local presetLbl = Instance.new("TextLabel", presetRow)
+presetLbl.Text = "Preset:"; presetLbl.Size = UDim2.new(0,46,1,0); presetLbl.Position = UDim2.new(0,10,0,0)
+presetLbl.BackgroundTransparency = 1; presetLbl.TextColor3 = TEXTG
+presetLbl.Font = Enum.Font.Gotham; presetLbl.TextSize = 10; presetLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+local function ApplyPreset(speed, jump)
+    DEFAULT_SPEED = speed; DEFAULT_JUMP = jump
+    speedInp.Text = tostring(speed); jumpInp.Text = tostring(jump)
+    speedValLbl.Text = tostring(speed); jumpValLbl.Text = tostring(jump)
+    speedFill.Size = UDim2.new(math.clamp(speed/200,0,1),0,1,0)
+    speedThumb.Position = UDim2.new(math.clamp(speed/200,0,1),0,0.5,0)
+    jumpFill.Size  = UDim2.new(math.clamp(jump/500,0,1),0,1,0)
+    jumpThumb.Position  = UDim2.new(math.clamp(jump/500,0,1),0,0.5,0)
+    ApplySpeed(speed); ApplyJump(jump)
+end
+
+local p1 = MakeSmallBtn(presetRow, "Normal",  Color3.fromRGB(60,60,60),      UDim2.new(0, 58,0.5,-11), nil, 58, 22)
+local p2 = MakeSmallBtn(presetRow, "Fast",    BLUEDK,                         UDim2.new(0,120,0.5,-11), nil, 48, 22)
+local p3 = MakeSmallBtn(presetRow, "Super",   Color3.fromRGB(120,50,200),     UDim2.new(0,172,0.5,-11), nil, 48, 22)
+local p4 = MakeSmallBtn(presetRow, "MAX",     ACCENT2,                        UDim2.new(0,224,0.5,-11), nil, 40, 22)
+p1.MouseButton1Click:Connect(function() ApplyPreset(16,  50)  end)
+p2.MouseButton1Click:Connect(function() ApplyPreset(50,  100) end)
+p3.MouseButton1Click:Connect(function() ApplyPreset(100, 300) end)
+p4.MouseButton1Click:Connect(function() ApplyPreset(500, 999) end)
+
+-- ─── RESET ALL ───
+local resetAllRow = MakeRow(SpeedTab, 5, 34)
+resetAllRow.BackgroundColor3 = Color3.fromRGB(26,26,26)
+local resetAllBtn = MakeSmallBtn(resetAllRow, "🔄 Reset Semua ke Default", Color3.fromRGB(55,55,55), UDim2.new(0.5,-80,0.5,-11), nil, 160, 22)
+resetAllBtn.MouseButton1Click:Connect(function() ApplyPreset(16, 50) end)
+
+-- ─── FLY TOGGLE ───
+local flyRow = MakeRow(SpeedTab, 6, 44)
+flyRow.BackgroundColor3 = Color3.fromRGB(24,24,24)
+
+local flyLabel = Instance.new("TextLabel", flyRow)
+flyLabel.Text = "🕊  Fly"
+flyLabel.Size = UDim2.new(0,60,1,0); flyLabel.Position = UDim2.new(0,10,0,0)
+flyLabel.BackgroundTransparency = 1; flyLabel.TextColor3 = TEXTW
+flyLabel.Font = Enum.Font.GothamBold; flyLabel.TextSize = 11
+flyLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local flyStatusLabel = Instance.new("TextLabel", flyRow)
+flyStatusLabel.Text = "OFF"
+flyStatusLabel.Size = UDim2.new(0,40,1,0); flyStatusLabel.Position = UDim2.new(0,62,0,0)
+flyStatusLabel.BackgroundTransparency = 1; flyStatusLabel.TextColor3 = TEXTD
+flyStatusLabel.Font = Enum.Font.GothamBold; flyStatusLabel.TextSize = 11
+flyStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local flySpeedLabel = Instance.new("TextLabel", flyRow)
+flySpeedLabel.Text = "Fly Speed:"
+flySpeedLabel.Size = UDim2.new(0,60,1,0); flySpeedLabel.Position = UDim2.new(0,110,0,0)
+flySpeedLabel.BackgroundTransparency = 1; flySpeedLabel.TextColor3 = TEXTG
+flySpeedLabel.Font = Enum.Font.Gotham; flySpeedLabel.TextSize = 10
+flySpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local flySpeedInput = MakeInlineInput(flyRow, "50", UDim2.new(0,172,0.5,-11), UDim2.new(0,38,0,22))
+flySpeedInput.Text = "50"
+
+local flyToggleBtn = MakeSmallBtn(flyRow, "▶ Fly ON", Color3.fromRGB(50,120,200), UDim2.new(1,-86,0.5,-13), nil, 78, 26)
+
+-- Fly logic
+local flyActive    = false
+local flyThread    = nil
+local flyBodyVel   = nil
+local flyBodyGyro  = nil
+
+local function StopFly()
+    flyActive = false
+    if flyThread then task.cancel(flyThread); flyThread = nil end
+    -- Hapus BodyVelocity & BodyGyro
+    if flyBodyVel  and flyBodyVel.Parent  then flyBodyVel:Destroy()  end
+    if flyBodyGyro and flyBodyGyro.Parent then flyBodyGyro:Destroy() end
+    flyBodyVel = nil; flyBodyGyro = nil
+    -- Kembalikan gravity
+    local hum = GetHumanoid()
+    if hum then
+        hum.PlatformStand = false
+    end
+    flyToggleBtn.Text = "▶ Fly ON"
+    flyToggleBtn.BackgroundColor3 = Color3.fromRGB(50,120,200)
+    flyStatusLabel.Text = "OFF"; flyStatusLabel.TextColor3 = TEXTD
+end
+
+local function StartFly()
+    local hrp = GetHRP()
+    local hum = GetHumanoid()
+    if not hrp or not hum then return end
+
+    flyActive = true
+    hum.PlatformStand = true  -- nonaktifkan kontrol default agar tidak jatuh
+
+    -- Buat BodyVelocity
+    flyBodyVel = Instance.new("BodyVelocity", hrp)
+    flyBodyVel.Velocity        = Vector3.zero
+    flyBodyVel.MaxForce        = Vector3.new(1e5, 1e5, 1e5)
+
+    -- Buat BodyGyro (agar tidak berputar)
+    flyBodyGyro = Instance.new("BodyGyro", hrp)
+    flyBodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+    flyBodyGyro.P         = 1e4
+    flyBodyGyro.CFrame    = hrp.CFrame
+
+    flyToggleBtn.Text = "■ Fly OFF"
+    flyToggleBtn.BackgroundColor3 = ACCENT2
+    flyStatusLabel.Text = "ON ✈"; flyStatusLabel.TextColor3 = BLUE
+
+    flyThread = task.spawn(function()
+        local cam = workspace.CurrentCamera
+        while flyActive do
+            local hrp2 = GetHRP()
+            if not hrp2 or not flyBodyVel or not flyBodyVel.Parent then
+                StopFly(); break
+            end
+
+            local speed    = tonumber(flySpeedInput.Text) or 50
+            local dir      = Vector3.zero
+            local camCF    = cam.CFrame
+
+            -- Deteksi input
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                dir = dir + camCF.LookVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                dir = dir - camCF.LookVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                dir = dir - camCF.RightVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                dir = dir + camCF.RightVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                dir = dir + Vector3.new(0,1,0)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                dir = dir - Vector3.new(0,1,0)
+            end
+
+            if dir.Magnitude > 0 then
+                flyBodyVel.Velocity = dir.Unit * speed
+            else
+                flyBodyVel.Velocity = Vector3.zero
+            end
+
+            -- Arahkan karakter ke arah kamera
+            flyBodyGyro.CFrame = CFrame.new(Vector3.zero, camCF.LookVector) + hrp2.Position
+
+            task.wait()
+        end
+    end)
+end
+
+flyToggleBtn.MouseButton1Click:Connect(function()
+    if flyActive then
+        StopFly()
+    else
+        StartFly()
+    end
+end)
+
+-- Stop fly otomatis saat respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    if flyActive then StopFly() end
+end)
+
+-- ════════════════════════════════════════
 --    SETTINGS TAB
 -- ════════════════════════════════════════
-local SettingsTab = NewTab("Settings", 3)
+local SettingsTab = NewTab("Settings", 4)
 
 MakeSecHeader(SettingsTab, "DATA", 1)
 
