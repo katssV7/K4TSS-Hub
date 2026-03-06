@@ -1196,14 +1196,19 @@ local function StartInfiniteJump()
     ijToggleBtn.BackgroundColor3 = ACCENT2
     ijStatusLabel.Text = "ON ✔"; ijStatusLabel.TextColor3 = GREEN
 
-    -- Hanya jump jika karakter sudah di udara (bukan di tanah)
-    -- Sehingga jump pertama normal, lompatan berikutnya adalah infinite jump
-    ijConnection = UserInputService.JumpRequest:Connect(function()
+    -- Gunakan InputBegan bukan JumpRequest
+    -- InputBegan hanya fire SEKALI saat tombol ditekan (tidak repeat)
+    ijConnection = UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.KeyCode ~= Enum.KeyCode.Space
+        and input.UserInputType ~= Enum.UserInputType.Touch then return end
         if not infiniteJumpActive then return end
+
         local hum = GetHumanoid()
         if not hum then return end
         local state = hum:GetState()
-        -- Hanya aktif saat di udara (Freefall atau Jumping)
+
+        -- Hanya lompat jika sudah di udara (bukan jump pertama dari tanah)
         if state == Enum.HumanoidStateType.Freefall
         or state == Enum.HumanoidStateType.Jumping then
             hum:ChangeState(Enum.HumanoidStateType.Jumping)
@@ -1215,11 +1220,13 @@ ijToggleBtn.MouseButton1Click:Connect(function()
     if infiniteJumpActive then StopInfiniteJump() else StartInfiniteJump() end
 end)
 
--- Reconnect ke karakter baru saat respawn
 local function ReconnectIJ(char)
     if not infiniteJumpActive then return end
     if ijConnection then ijConnection:Disconnect(); ijConnection = nil end
-    ijConnection = UserInputService.JumpRequest:Connect(function()
+    ijConnection = UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.KeyCode ~= Enum.KeyCode.Space
+        and input.UserInputType ~= Enum.UserInputType.Touch then return end
         if not infiniteJumpActive then return end
         local hum = GetHumanoid()
         if not hum then return end
