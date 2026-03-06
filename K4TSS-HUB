@@ -2,7 +2,7 @@
     ╔══════════════════════════════════════════════╗
     ║         K4TSS V2.0 - WAYPOINT HUB           ║
     ║  Fitur: Folder, Loop TP, Player TP,          ║
-    ║         Auto-Save (File)                     ║
+    ║         Bring Player, Auto-Save (File)       ║
     ║  Hotkey: G = Toggle GUI                      ║
     ╚══════════════════════════════════════════════╝
 ]]
@@ -117,6 +117,48 @@ local function StartLoop(folderIdx, onStep)
             task.wait(folder.loopDelay or 3)
             i = i + 1
             if i > #folder.waypoints then i = 1 end
+        end
+    end)
+end
+
+-- ════════════════════════════════════════
+--    BRING MANAGER
+-- ════════════════════════════════════════
+-- bringThreads[playerName] = task thread yang sedang loop bring
+local bringThreads = {}
+
+local function StopBring(playerName)
+    if bringThreads[playerName] then
+        task.cancel(bringThreads[playerName])
+        bringThreads[playerName] = nil
+    end
+end
+
+local function StopAllBring()
+    for name in pairs(bringThreads) do
+        StopBring(name)
+    end
+end
+
+-- Bring sekali: teleport HRP player target ke posisi kita + sedikit offset
+local function BringOnce(player)
+    local myHRP = GetHRP()
+    if not myHRP then return false end
+    local char = player.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    hrp.CFrame = myHRP.CFrame * CFrame.new(2, 0, 0)
+    return true
+end
+
+-- Bring loop: terus-menerus bring player agar tidak bisa kabur
+local function StartBringLoop(player, onTick)
+    StopBring(player.Name)
+    bringThreads[player.Name] = task.spawn(function()
+        while bringThreads[player.Name] do
+            BringOnce(player)
+            if onTick then onTick() end
+            task.wait(0.1)
         end
     end)
 end
@@ -328,6 +370,7 @@ DNo.MouseButton1Click:Connect(function() Dialog.Visible = false end)
 DYes.MouseButton1Click:Connect(function()
     SaveData()
     for i in pairs(loopThreads) do StopLoop(i) end
+    StopAllBring()
     Dialog.Visible = false; Window.Visible = false
 end)
 
@@ -735,14 +778,30 @@ local plrHeaderRow = MakeRow(PlayersTab, 1, 46)
 plrHeaderRow.BackgroundColor3 = Color3.fromRGB(28,28,28)
 
 local plrHeaderLabel = Instance.new("TextLabel", plrHeaderRow)
-plrHeaderLabel.Text = "👤  Player Teleport"
-plrHeaderLabel.Size = UDim2.new(0.6,0,1,0); plrHeaderLabel.Position = UDim2.new(0,10,0,0)
+plrHeaderLabel.Text = "👤  Player Teleport & Bring"
+plrHeaderLabel.Size = UDim2.new(0.45,0,1,0); plrHeaderLabel.Position = UDim2.new(0,10,0,0)
 plrHeaderLabel.BackgroundTransparency = 1; plrHeaderLabel.TextColor3 = TEXTW
 plrHeaderLabel.Font = Enum.Font.GothamBold; plrHeaderLabel.TextSize = 11
 plrHeaderLabel.TextXAlignment = Enum.TextXAlignment.Left
 
+-- Stop All Bring button
+local stopAllBringBtn = MakeSmallBtn(plrHeaderRow, "■ Stop All", ACCENT2, UDim2.new(1,-152,0.5,-11), nil, 70, 22)
+
 -- Scan button
 local scanBtn = MakeSmallBtn(plrHeaderRow, "🔍 Scan", BLUEDK, UDim2.new(1,-76,0.5,-11), nil, 66, 22)
+
+stopAllBringBtn.MouseButton1Click:Connect(function()
+    StopAllBring()
+    plrCountLabel.Text = "✅ Semua bring dihentikan"
+    plrCountLabel.TextColor3 = GREEN
+    task.delay(1.5, function()
+        plrCountLabel.Text = "Klik  🔍 Scan  untuk refresh daftar"
+        plrCountLabel.TextColor3 = TEXTG
+    end)
+    -- Refresh list agar tombol bring kembali normal
+    task.wait(0.1)
+    RefreshPlayerList()
+end)
 
 -- Info bar (jumlah player ditemukan)
 local plrInfoRow = MakeRow(PlayersTab, 2, 28)
@@ -787,7 +846,7 @@ local function RefreshPlayerList()
 
         local prow = Instance.new("Frame", PlrListContainer)
         prow.Name = "Plr_"..player.Name
-        prow.Size = UDim2.new(1,0,0,40)
+        prow.Size = UDim2.new(1,0,0,48)
         prow.BackgroundColor3 = (count%2==0) and ROWALT or ROW
         prow.BorderSizePixel = 0; prow.LayoutOrder = count; prow.ZIndex = 8
 
@@ -834,18 +893,16 @@ local function RefreshPlayerList()
 
         -- Cek apakah player punya karakter
         local hasChar = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local isBringing = bringThreads[player.Name] ~= nil
 
         -- Tombol TP ke player
         local tpPlrBtn = MakeSmallBtn(
             prow,
-            hasChar and "TP →" or "Respawn",
-            hasChar and BLUEDK or Color3.fromRGB(60,60,60),
-            UDim2.new(1,-78,0.5,-13), nil, 68, 26
+            hasChar and "TP →" or "No Char",
+            hasChar and BLUEDK or Color3.fromRGB(55,55,55),
+            UDim2.new(1,-130,0.5,-14), nil, 58, 24
         )
-
-        if not hasChar then
-            tpPlrBtn.TextColor3 = TEXTD
-        end
+        if not hasChar then tpPlrBtn.TextColor3 = TEXTD end
 
         tpPlrBtn.MouseButton1Click:Connect(function()
             local char = player.Character
@@ -854,19 +911,57 @@ local function RefreshPlayerList()
                 local pos = hrp.Position
                 TeleportTo(pos.X, pos.Y, pos.Z)
             else
-                -- Notif jika player tidak punya karakter
                 plrCountLabel.Text = "⚠ " .. player.Name .. " sedang respawn!"
                 plrCountLabel.TextColor3 = GOLD
                 task.delay(2, function()
-                    plrCountLabel.Text = "Ditemukan: " .. count .. " player"
+                    plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
                     plrCountLabel.TextColor3 = GREEN
                 end)
             end
         end)
 
+        -- Tombol Bring player
+        local bringActive = bringThreads[player.Name] ~= nil
+        local bringBtn = MakeSmallBtn(
+            prow,
+            bringActive and "■ Stop" or "⬇ Bring",
+            bringActive and ACCENT2 or Color3.fromRGB(160, 80, 200),
+            UDim2.new(1,-66,0.5,-14), nil, 58, 24
+        )
+
+        bringBtn.MouseButton1Click:Connect(function()
+            if bringThreads[player.Name] then
+                -- Stop bring
+                StopBring(player.Name)
+                bringBtn.Text = "⬇ Bring"
+                bringBtn.BackgroundColor3 = Color3.fromRGB(160, 80, 200)
+                plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
+                plrCountLabel.TextColor3 = GREEN
+            else
+                -- Cek karakter target
+                local char = player.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                if not hrp then
+                    plrCountLabel.Text = "⚠ " .. player.Name .. " tidak punya karakter!"
+                    plrCountLabel.TextColor3 = GOLD
+                    task.delay(2, function()
+                        plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
+                        plrCountLabel.TextColor3 = GREEN
+                    end)
+                    return
+                end
+                -- Mulai bring loop
+                StartBringLoop(player, nil)
+                bringBtn.Text = "■ Stop"
+                bringBtn.BackgroundColor3 = ACCENT2
+                plrCountLabel.Text = "🔗 Bringing: " .. player.Name
+                plrCountLabel.TextColor3 = Color3.fromRGB(200, 100, 255)
+            end
+        end)
+
         -- Hover effect
         local hBtn = Instance.new("TextButton", prow)
-        hBtn.Size = UDim2.new(1,-80,1,0); hBtn.BackgroundTransparency = 1; hBtn.Text = ""; hBtn.ZIndex = 7
+        hBtn.Size = UDim2.new(1,-140,1,0); hBtn.BackgroundTransparency = 1; hBtn.Text = ""; hBtn.ZIndex = 7
         hBtn.MouseEnter:Connect(function()
             TweenService:Create(prow,TweenInfo.new(0.08),{BackgroundColor3=Color3.fromRGB(42,42,42)}):Play()
         end)
@@ -955,7 +1050,7 @@ MakeSecHeader(SettingsTab, "INFO", 4)
 local infoRow = MakeRow(SettingsTab, 5, 100)
 local infoL = Instance.new("TextLabel", infoRow)
 local saveType = canSaveFile and "writefile (file lokal)" or "in-memory (sesi ini saja)"
-infoL.Text = "G = Toggle GUI\n\nAuto-save: " .. saveType .. "\nFile: K4TSS_Waypoints.json\nAuto-save tiap 30 detik.\nSave manual tersedia di atas.\n\nTab Players: klik Scan untuk refresh."
+infoL.Text = "G = Toggle GUI\n\nAuto-save: " .. saveType .. "\nFile: K4TSS_Waypoints.json\nAuto-save tiap 30 detik.\nSave manual tersedia di atas.\n\nTab Players: Scan → TP / Bring player.\nBring Loop: player terus ditarik ke kamu.\nStop All: hentikan semua bring sekaligus."
 infoL.Size = UDim2.new(1,-10,1,0); infoL.Position = UDim2.new(0,10,0,6)
 infoL.BackgroundTransparency = 1; infoL.TextColor3 = TEXTG
 infoL.Font = Enum.Font.Gotham; infoL.TextSize = 10; infoL.TextXAlignment = Enum.TextXAlignment.Left
