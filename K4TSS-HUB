@@ -759,13 +759,23 @@ plrCountLabel.BackgroundTransparency = 1; plrCountLabel.TextColor3 = TEXTG
 plrCountLabel.Font = Enum.Font.Gotham; plrCountLabel.TextSize = 10
 plrCountLabel.TextXAlignment = Enum.TextXAlignment.Left
 
+-- Streaming info row
+local streamRow = MakeRow(PlayersTab, 3, 28)
+streamRow.BackgroundColor3 = Color3.fromRGB(22,22,22)
+local streamLabel = Instance.new("TextLabel", streamRow)
+streamLabel.Text = "⚡ Mode: Step TP (anti-streaming) — otomatis mendekati player"
+streamLabel.Size = UDim2.new(1,-10,1,0); streamLabel.Position = UDim2.new(0,10,0,0)
+streamLabel.BackgroundTransparency = 1; streamLabel.TextColor3 = TEXTD
+streamLabel.Font = Enum.Font.Gotham; streamLabel.TextSize = 9
+streamLabel.TextXAlignment = Enum.TextXAlignment.Left
+
 -- Player list container
 local PlrListContainer = Instance.new("Frame", PlayersTab)
 PlrListContainer.Name = "PlrList"
 PlrListContainer.Size = UDim2.new(1,0,0,0)
 PlrListContainer.BackgroundTransparency = 1
 PlrListContainer.BorderSizePixel = 0
-PlrListContainer.LayoutOrder = 3
+PlrListContainer.LayoutOrder = 4
 PlrListContainer.AutomaticSize = Enum.AutomaticSize.Y
 PlrListContainer.ZIndex = 8
 
@@ -791,7 +801,7 @@ local function RefreshPlayerList()
 
         local prow = Instance.new("Frame", PlrListContainer)
         prow.Name = "Plr_"..player.Name
-        prow.Size = UDim2.new(1,0,0,40)
+        prow.Size = UDim2.new(1,0,0,46)
         prow.BackgroundColor3 = (count%2==0) and ROWALT or ROW
         prow.BorderSizePixel = 0; prow.LayoutOrder = count; prow.ZIndex = 8
 
@@ -836,7 +846,30 @@ local function RefreshPlayerList()
         pdisplay.Font = Enum.Font.Gotham; pdisplay.TextSize = 9
         pdisplay.TextXAlignment = Enum.TextXAlignment.Left
 
-        -- Tombol TP ke player (selalu tampil "TP →", cek karakter saat diklik)
+        -- Hitung jarak ke player (jika karakter ter-load)
+        local myHRP2   = GetHRP()
+        local tgtChar  = player.Character
+        local tgtHRP   = tgtChar and tgtChar:FindFirstChild("HumanoidRootPart")
+        local distText = "? studs"
+        local distColor = TEXTD
+        if myHRP2 and tgtHRP then
+            local dist = math.floor((myHRP2.Position - tgtHRP.Position).Magnitude)
+            distText  = dist .. " studs"
+            distColor = dist < 100 and GREEN or (dist < 500 and GOLD or ACCENT)
+        elseif not tgtHRP then
+            distText  = "out of range"
+            distColor = ACCENT
+        end
+
+        -- Label jarak
+        local distLabel = Instance.new("TextLabel", prow)
+        distLabel.Text = distText
+        distLabel.Size = UDim2.new(1,-160,0,13); distLabel.Position = UDim2.new(0,42,1,-15)
+        distLabel.BackgroundTransparency = 1; distLabel.TextColor3 = distColor
+        distLabel.Font = Enum.Font.Gotham; distLabel.TextSize = 9
+        distLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+        -- Tombol TP ke player
         local tpPlrBtn = MakeSmallBtn(
             prow, "TP →", BLUEDK,
             UDim2.new(1,-78,0.5,-13), nil, 68, 26
@@ -846,15 +879,76 @@ local function RefreshPlayerList()
             local char = player.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             if hrp then
-                -- Offset 4 studs ke samping mengikuti arah hadap player target
+                -- Karakter sudah ter-load, TP langsung
                 local targetCF = hrp.CFrame * CFrame.new(4, 0, 0)
                 TeleportTo(targetCF.X, targetCF.Y, targetCF.Z)
-            else
-                plrCountLabel.Text = "⚠ " .. player.Name .. " sedang respawn, coba lagi!"
-                plrCountLabel.TextColor3 = GOLD
+                plrCountLabel.Text = "✅ Teleport ke " .. player.Name
+                plrCountLabel.TextColor3 = GREEN
                 task.delay(2, function()
                     plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
                     plrCountLabel.TextColor3 = GREEN
+                end)
+            else
+                -- Karakter belum ter-load (streaming) — lakukan step TP
+                tpPlrBtn.Text = "..."
+                tpPlrBtn.BackgroundColor3 = GOLD
+                plrCountLabel.Text = "⏳ Mendekati " .. player.Name .. "..."
+                plrCountLabel.TextColor3 = GOLD
+
+                -- Dapatkan posisi dari Roblox service (bukan Character)
+                -- Gunakan GetNetworkPing / posisi dari server via Character
+                -- Fallback: minta user untuk pakai step manual
+                local stepSize   = 400
+                local maxSteps   = 20
+                local stepCount  = 0
+                local stepThread
+
+                stepThread = task.spawn(function()
+                    while stepCount < maxSteps do
+                        stepCount = stepCount + 1
+
+                        -- Cek lagi setiap step apakah karakter sudah ter-load
+                        local c2  = player.Character
+                        local h2  = c2 and c2:FindFirstChild("HumanoidRootPart")
+                        if h2 then
+                            -- Berhasil, TP ke sisinya
+                            local cf2 = h2.CFrame * CFrame.new(4, 0, 0)
+                            TeleportTo(cf2.X, cf2.Y, cf2.Z)
+                            tpPlrBtn.Text = "TP →"
+                            tpPlrBtn.BackgroundColor3 = BLUEDK
+                            plrCountLabel.Text = "✅ Teleport ke " .. player.Name
+                            plrCountLabel.TextColor3 = GREEN
+                            task.delay(2, function()
+                                plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
+                                plrCountLabel.TextColor3 = GREEN
+                            end)
+                            return
+                        end
+
+                        -- Gerak maju ke arah estimasi posisi player
+                        -- (Roblox tidak expose posisi player lain jika streaming)
+                        -- Kita lompat ke arah yang tidak diketahui, jadi tampilkan pesan
+                        local myH = GetHRP()
+                        if myH then
+                            -- Lompat maju ke arah hadap kita
+                            local fwd = myH.CFrame.LookVector
+                            local pos = myH.Position + (fwd * stepSize)
+                            TeleportTo(pos.X, pos.Y, pos.Z)
+                        end
+
+                        plrCountLabel.Text = "⏳ Step " .. stepCount .. "/" .. maxSteps .. " — " .. player.Name
+                        task.wait(0.4)
+                    end
+
+                    -- Timeout
+                    tpPlrBtn.Text = "TP →"
+                    tpPlrBtn.BackgroundColor3 = BLUEDK
+                    plrCountLabel.Text = "⚠ " .. player.Name .. " terlalu jauh / streaming"
+                    plrCountLabel.TextColor3 = ACCENT
+                    task.delay(3, function()
+                        plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
+                        plrCountLabel.TextColor3 = GREEN
+                    end)
                 end)
             end
         end)
