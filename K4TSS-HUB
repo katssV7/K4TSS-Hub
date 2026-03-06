@@ -1,1 +1,1017 @@
-hi
+--[[
+    ╔══════════════════════════════════════════════╗
+    ║         K4TSS V2.0 - WAYPOINT HUB           ║
+    ║  Fitur: Folder, Loop TP, Auto-Save (File)    ║
+    ║  Hotkey: G = Toggle GUI                      ║
+    ╚══════════════════════════════════════════════╝
+
+    CARA PAKAI:
+      1. Execute script ini
+      2. Buat folder dulu (misal: "MOUNT")
+      3. Pilih folder, lalu tambah waypoint
+      4. Aktifkan Loop untuk auto-teleport berurutan
+      5. Data tersimpan otomatis di file lokal executor
+
+    AUTO-SAVE:
+      Menggunakan writefile/readfile (executor API).
+      File disimpan di: workspace/K4TSS_Waypoints.json
+      Jika executor tidak support writefile, data tetap
+      tersimpan selama sesi berlangsung (in-memory).
+]]
+
+-- ════════════════════════════════════════
+--    SERVICES
+-- ════════════════════════════════════════
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local TweenService      = game:GetService("TweenService")
+local StarterGui        = game:GetService("StarterGui")
+local HttpService       = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ════════════════════════════════════════
+--    AUTO-SAVE (writefile / readfile)
+--    Executor API — tidak butuh server
+-- ════════════════════════════════════════
+local SAVE_FILE = "K4TSS_Waypoints.json"
+
+-- Cek apakah executor support file API
+local canSaveFile = (typeof(writefile) == "function" and typeof(readfile) == "function")
+
+-- ─── STRUKTUR DATA ───
+-- Folders = array berurutan
+-- { name=string, waypoints={...}, loopActive=bool, loopDelay=number }
+-- waypoint = { name=string, x=number, y=number, z=number }
+local Folders = {}
+
+-- ─── ENCODE JSON manual (tanpa HttpService agar tidak error di semua game) ───
+local function EncodeJSON(data)
+    -- Gunakan pcall HttpService, fallback ke tostring sederhana
+    local ok, result = pcall(function()
+        return HttpService:JSONEncode(data)
+    end)
+    return ok and result or nil
+end
+
+local function DecodeJSON(str)
+    local ok, result = pcall(function()
+        return HttpService:JSONDecode(str)
+    end)
+    return ok and result or nil
+end
+
+-- ─── SAVE ───
+local function SaveData()
+    local encoded = EncodeJSON(Folders)
+    if not encoded then return end
+
+    if canSaveFile then
+        pcall(function()
+            writefile(SAVE_FILE, encoded)
+        end)
+    end
+    -- in-memory selalu update (Folders variable itu sendiri)
+end
+
+-- ─── LOAD ───
+local function LoadData()
+    if not canSaveFile then return end
+
+    local ok, content = pcall(function()
+        return readfile(SAVE_FILE)
+    end)
+
+    if ok and content and content ~= "" then
+        local decoded = DecodeJSON(content)
+        if decoded and type(decoded) == "table" then
+            Folders = decoded
+            -- Reset loopActive setelah load (jangan auto-loop saat masuk)
+            for _, folder in ipairs(Folders) do
+                folder.loopActive = false
+                folder.loopDelay  = folder.loopDelay or 3
+            end
+        end
+    end
+end
+
+-- Load saat execute
+LoadData()
+
+-- Auto-save tiap 30 detik
+task.spawn(function()
+    while task.wait(30) do
+        SaveData()
+    end
+end)
+
+-- ════════════════════════════════════════
+--    TELEPORT HELPER
+-- ════════════════════════════════════════
+local function GetHRP()
+    local c = LocalPlayer.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function TeleportTo(x, y, z)
+    local hrp = GetHRP()
+    if hrp then
+        hrp.CFrame = CFrame.new(x, y + 3, z)
+    end
+end
+
+local function GetCurrentPos()
+    local hrp = GetHRP()
+    if hrp then
+        local p = hrp.Position
+        return p.X, p.Y, p.Z
+    end
+    return 0, 0, 0
+end
+
+-- ════════════════════════════════════════
+--    LOOP MANAGER
+-- ════════════════════════════════════════
+-- loopThreads[folderIndex] = coroutine/thread yang sedang berjalan
+local loopThreads = {}
+
+local function StopLoop(folderIdx)
+    if loopThreads[folderIdx] then
+        task.cancel(loopThreads[folderIdx])
+        loopThreads[folderIdx] = nil
+    end
+    if Folders[folderIdx] then
+        Folders[folderIdx].loopActive = false
+    end
+end
+
+local function StartLoop(folderIdx, onStep)
+    StopLoop(folderIdx)
+    local folder = Folders[folderIdx]
+    if not folder or #folder.waypoints < 2 then return end
+    folder.loopActive = true
+
+    loopThreads[folderIdx] = task.spawn(function()
+        local i = 1
+        while folder.loopActive do
+            local wp = folder.waypoints[i]
+            if wp then
+                TeleportTo(wp.x, wp.y, wp.z)
+                if onStep then onStep(i) end
+            end
+            task.wait(folder.loopDelay or 3)
+            i = i + 1
+            if i > #folder.waypoints then i = 1 end
+        end
+    end)
+end
+
+-- ════════════════════════════════════════
+--    GUI BUILD
+-- ════════════════════════════════════════
+if LocalPlayer.PlayerGui:FindFirstChild("K4TSSHub") then
+    LocalPlayer.PlayerGui.K4TSSHub:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name           = "K4TSSHub"
+ScreenGui.ResetOnSpawn   = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.DisplayOrder   = 999
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.Parent         = LocalPlayer.PlayerGui
+
+-- ─── COLORS ───
+local BG       = Color3.fromRGB(30, 30, 30)
+local SIDEBAR  = Color3.fromRGB(38, 38, 38)
+local CONTENT  = Color3.fromRGB(26, 26, 26)
+local TITLEBAR = Color3.fromRGB(42, 42, 42)
+local ROW      = Color3.fromRGB(34, 34, 34)
+local ROWALT   = Color3.fromRGB(30, 30, 30)
+local ACCENT   = Color3.fromRGB(220, 50, 50)
+local ACCENT2  = Color3.fromRGB(160, 20, 20)
+local STATUSBG = Color3.fromRGB(33, 33, 33)
+local DIVIDER  = Color3.fromRGB(50, 50, 50)
+local TEXTW    = Color3.fromRGB(230, 230, 230)
+local TEXTG    = Color3.fromRGB(140, 140, 140)
+local TEXTD    = Color3.fromRGB(80, 80, 80)
+local GREEN    = Color3.fromRGB(80, 220, 100)
+local GREENDK  = Color3.fromRGB(40, 160, 60)
+local GOLD     = Color3.fromRGB(255, 185, 50)
+local BLUE     = Color3.fromRGB(50, 140, 255)
+local BLUEDK   = Color3.fromRGB(30, 90, 200)
+
+local SIZE_NORMAL = UDim2.new(0, 540, 0, 360)
+local SIZE_MINI   = UDim2.new(0, 160, 0, 28)
+local currentSize = "normal"
+
+-- ─── WINDOW ───
+local Window = Instance.new("Frame")
+Window.Name             = "Window"
+Window.Size             = SIZE_NORMAL
+Window.Position         = UDim2.new(0.5, -270, 0.5, -180)
+Window.BackgroundColor3 = BG
+Window.BorderSizePixel  = 0
+Window.ClipsDescendants = true
+Window.Parent           = ScreenGui
+Instance.new("UICorner", Window).CornerRadius = UDim.new(0, 6)
+local ws = Instance.new("UIStroke", Window)
+ws.Color = Color3.fromRGB(60,60,60); ws.Thickness = 1
+
+-- ─── TITLEBAR ───
+local TBar = Instance.new("Frame", Window)
+TBar.Name = "TitleBar"; TBar.Size = UDim2.new(1,0,0,36)  -- lebih tinggi, mudah disentuh
+TBar.BackgroundColor3 = TITLEBAR; TBar.BorderSizePixel = 0; TBar.ZIndex = 10
+Instance.new("UICorner", TBar).CornerRadius = UDim.new(0,4)
+-- Fix bottom corners titlebar
+local tfix = Instance.new("Frame", TBar)
+tfix.Size = UDim2.new(1,0,0,6); tfix.Position = UDim2.new(0,0,1,-6)
+tfix.BackgroundColor3 = TITLEBAR; tfix.BorderSizePixel = 0; tfix.ZIndex = 10
+-- Red accent strip
+local tacc = Instance.new("Frame", TBar)
+tacc.Size = UDim2.new(0,3,0.7,0); tacc.Position = UDim2.new(0,0,0.15,0)
+tacc.BackgroundColor3 = ACCENT; tacc.BorderSizePixel = 0; tacc.ZIndex = 11
+-- Title text
+local TTitle = Instance.new("TextLabel", TBar)
+TTitle.Text = "K4TSS V2.0  ·  Waypoint Hub"
+TTitle.Size = UDim2.new(1,-90,1,0); TTitle.Position = UDim2.new(0,12,0,0)
+TTitle.BackgroundTransparency = 1; TTitle.TextColor3 = TEXTW
+TTitle.Font = Enum.Font.GothamBold; TTitle.TextSize = 12
+TTitle.TextXAlignment = Enum.TextXAlignment.Left; TTitle.ZIndex = 11
+
+-- Titlebar buttons
+local function MakeTBarBtn(text, xOff)
+    local btn = Instance.new("TextButton", TBar)
+    btn.Text = text; btn.Size = UDim2.new(0,30,0,26)  -- lebih besar untuk jari
+    btn.Position = UDim2.new(1,xOff,0.5,-13)
+    btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
+    btn.BackgroundTransparency = 0.5
+    btn.TextColor3 = TEXTW; btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 16; btn.BorderSizePixel = 0; btn.ZIndex = 12
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+    btn.MouseEnter:Connect(function() TweenService:Create(btn,TweenInfo.new(0.1),{BackgroundTransparency=0.2}):Play() end)
+    btn.MouseLeave:Connect(function() TweenService:Create(btn,TweenInfo.new(0.1),{BackgroundTransparency=0.5}):Play() end)
+    return btn
+end
+local CloseBtn = MakeTBarBtn("×", -34); CloseBtn.TextColor3 = Color3.fromRGB(255,100,100)
+local MinBtn   = MakeTBarBtn("–", -68)
+
+-- ─── DRAG LOGIC (Mobile + PC) ───
+-- Drag dari TitleBar — support Touch (HP) dan Mouse (PC)
+do
+    local dragging  = false
+    local dragStart = Vector2.zero
+    local winStart  = UDim2.new()
+
+    TBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging  = true
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            winStart  = Window.Position
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+            Window.Position = UDim2.new(
+                winStart.X.Scale, winStart.X.Offset + delta.X,
+                winStart.Y.Scale, winStart.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+        or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
+
+-- ─── BODY ───
+local Body = Instance.new("Frame", Window)
+Body.Name = "Body"; Body.Size = UDim2.new(1,0,1,-36); Body.Position = UDim2.new(0,0,0,36)
+Body.BackgroundTransparency = 1; Body.ClipsDescendants = true; Body.ZIndex = 5
+
+-- ─── SIDEBAR ───
+local Sidebar = Instance.new("Frame", Body)
+Sidebar.Size = UDim2.new(0,120,1,-30)
+Sidebar.BackgroundColor3 = SIDEBAR; Sidebar.BorderSizePixel = 0; Sidebar.ZIndex = 6
+local SL = Instance.new("UIListLayout", Sidebar)
+SL.FillDirection = Enum.FillDirection.Vertical
+SL.HorizontalAlignment = Enum.HorizontalAlignment.Left
+SL.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- ─── CONTENT AREA ───
+local ContentArea = Instance.new("Frame", Body)
+ContentArea.Size = UDim2.new(1,-120,1,-30); ContentArea.Position = UDim2.new(0,120,0,0)
+ContentArea.BackgroundColor3 = CONTENT; ContentArea.BorderSizePixel = 0
+ContentArea.ClipsDescendants = true; ContentArea.ZIndex = 6
+local cborder = Instance.new("Frame", ContentArea)
+cborder.Size = UDim2.new(0,1,1,0); cborder.BackgroundColor3 = DIVIDER; cborder.BorderSizePixel = 0
+
+-- ─── STATUS BAR ───
+local StatusBar = Instance.new("Frame", Body)
+StatusBar.Size = UDim2.new(1,0,0,30); StatusBar.Position = UDim2.new(0,0,1,-30)
+StatusBar.BackgroundColor3 = STATUSBG; StatusBar.BorderSizePixel = 0; StatusBar.ZIndex = 6
+local sline = Instance.new("Frame", StatusBar)
+sline.Size = UDim2.new(1,0,0,1); sline.BackgroundColor3 = DIVIDER; sline.BorderSizePixel = 0
+
+-- Avatar
+local AvatarFrame = Instance.new("Frame", StatusBar)
+AvatarFrame.Size = UDim2.new(0,22,0,22); AvatarFrame.Position = UDim2.new(0,6,0.5,-11)
+AvatarFrame.BackgroundColor3 = Color3.fromRGB(50,50,50); AvatarFrame.BorderSizePixel = 0
+Instance.new("UICorner", AvatarFrame).CornerRadius = UDim.new(1,0)
+local AvatarImg = Instance.new("ImageLabel", AvatarFrame)
+AvatarImg.Size = UDim2.new(1,0,1,0); AvatarImg.BackgroundTransparency = 1; AvatarImg.BorderSizePixel = 0
+Instance.new("UICorner", AvatarImg).CornerRadius = UDim.new(1,0)
+task.spawn(function()
+    local ok, img = pcall(function()
+        return Players:GetUserThumbnailAsync(LocalPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+    end)
+    if ok and img then AvatarImg.Image = img else AvatarFrame.BackgroundColor3 = ACCENT end
+end)
+
+local WelcomeL = Instance.new("TextLabel", StatusBar)
+WelcomeL.Text = "Welcome, " .. LocalPlayer.Name
+WelcomeL.Size = UDim2.new(0.5,0,1,0); WelcomeL.Position = UDim2.new(0,34,0,0)
+WelcomeL.BackgroundTransparency = 1; WelcomeL.TextColor3 = TEXTG
+WelcomeL.Font = Enum.Font.Gotham; WelcomeL.TextSize = 10
+WelcomeL.TextXAlignment = Enum.TextXAlignment.Left
+
+local SaveStatusL = Instance.new("TextLabel", StatusBar)
+SaveStatusL.Text = canSaveFile and "💾 Auto-save (file)" or "💾 Auto-save (sesi)"
+SaveStatusL.Size = UDim2.new(0.5,-8,1,0); SaveStatusL.Position = UDim2.new(0.5,0,0,0)
+SaveStatusL.BackgroundTransparency = 1; SaveStatusL.TextColor3 = TEXTG
+SaveStatusL.Font = Enum.Font.Gotham; SaveStatusL.TextSize = 10
+SaveStatusL.TextXAlignment = Enum.TextXAlignment.Right
+
+-- ─── CLOSE DIALOG ───
+local Dialog = Instance.new("Frame", ScreenGui)
+Dialog.Name = "CloseDialog"; Dialog.Size = UDim2.new(0,240,0,110)
+Dialog.Position = UDim2.new(0.5,-120,0.5,-55)
+Dialog.BackgroundColor3 = Color3.fromRGB(38,38,38); Dialog.BorderSizePixel = 0
+Dialog.ZIndex = 100; Dialog.Visible = false
+Instance.new("UICorner", Dialog).CornerRadius = UDim.new(0,6)
+local dStroke = Instance.new("UIStroke", Dialog); dStroke.Color = ACCENT; dStroke.Thickness = 1.5
+local DTitle = Instance.new("TextLabel", Dialog)
+DTitle.Text = "Simpan & Tutup K4TSS?"
+DTitle.Size = UDim2.new(1,0,0,30); DTitle.Position = UDim2.new(0,0,0,12)
+DTitle.BackgroundTransparency = 1; DTitle.TextColor3 = TEXTW
+DTitle.Font = Enum.Font.GothamBold; DTitle.TextSize = 13; DTitle.ZIndex = 101
+local DSub = Instance.new("TextLabel", Dialog)
+DSub.Text = "Semua waypoint akan disimpan"
+DSub.Size = UDim2.new(1,0,0,16); DSub.Position = UDim2.new(0,0,0,38)
+DSub.BackgroundTransparency = 1; DSub.TextColor3 = TEXTG
+DSub.Font = Enum.Font.Gotham; DSub.TextSize = 10; DSub.ZIndex = 101
+local DYes = Instance.new("TextButton", Dialog)
+DYes.Text = "Simpan & Tutup"; DYes.Size = UDim2.new(0,114,0,28); DYes.Position = UDim2.new(0,8,0,68)
+DYes.BackgroundColor3 = ACCENT; DYes.TextColor3 = TEXTW
+DYes.Font = Enum.Font.GothamBold; DYes.TextSize = 11; DYes.BorderSizePixel = 0; DYes.ZIndex = 101
+Instance.new("UICorner", DYes).CornerRadius = UDim.new(0,4)
+local DNo = Instance.new("TextButton", Dialog)
+DNo.Text = "Batal"; DNo.Size = UDim2.new(0,90,0,28); DNo.Position = UDim2.new(1,-98,0,68)
+DNo.BackgroundColor3 = Color3.fromRGB(60,60,60); DNo.TextColor3 = TEXTW
+DNo.Font = Enum.Font.GothamBold; DNo.TextSize = 11; DNo.BorderSizePixel = 0; DNo.ZIndex = 101
+Instance.new("UICorner", DNo).CornerRadius = UDim.new(0,4)
+CloseBtn.MouseButton1Click:Connect(function() Dialog.Visible = true end)
+DNo.MouseButton1Click:Connect(function() Dialog.Visible = false end)
+DYes.MouseButton1Click:Connect(function()
+    SaveData()
+    -- Stop semua loop
+    for i in pairs(loopThreads) do StopLoop(i) end
+    Dialog.Visible = false; Window.Visible = false
+end)
+
+-- ─── MINIMIZE ───
+local minimized = false
+MinBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    if minimized then
+        MinBtn.Text = "+"
+        TweenService:Create(Window, TweenInfo.new(0.2,Enum.EasingStyle.Quint), {Size=SIZE_MINI}):Play()
+        task.wait(0.2); Body.Visible = false
+    else
+        MinBtn.Text = "–"; Body.Visible = true
+        TweenService:Create(Window, TweenInfo.new(0.2,Enum.EasingStyle.Quint), {Size=SIZE_NORMAL}):Play()
+    end
+end)
+
+-- ════════════════════════════════════════
+--    TAB SYSTEM
+-- ════════════════════════════════════════
+local tabPages  = {}
+local tabBtns   = {}
+local activeTab = nil
+
+local function SwitchTab(name)
+    if activeTab == name then return end
+    activeTab = name
+    for n,p in pairs(tabPages) do p.Visible = (n==name) end
+    for n,b in pairs(tabBtns) do
+        local isA = (n==name)
+        local bar = b:FindFirstChild("ABar"); if bar then bar.Visible = isA end
+        local lbl = b:FindFirstChild("TLbl")
+        if lbl then
+            lbl.TextColor3 = isA and TEXTW or TEXTG
+            lbl.Font = isA and Enum.Font.GothamSemibold or Enum.Font.Gotham
+        end
+        b.BackgroundColor3 = isA and Color3.fromRGB(44,44,44) or SIDEBAR
+    end
+end
+
+local function NewTab(name, lo)
+    local btn = Instance.new("TextButton", Sidebar)
+    btn.Name = "Tab_"..name; btn.Size = UDim2.new(1,0,0,36)
+    btn.BackgroundColor3 = SIDEBAR; btn.BorderSizePixel = 0; btn.Text = ""; btn.LayoutOrder = lo; btn.ZIndex = 7
+    local abar = Instance.new("Frame", btn); abar.Name = "ABar"
+    abar.Size = UDim2.new(0,3,0.6,0); abar.Position = UDim2.new(0,0,0.2,0)
+    abar.BackgroundColor3 = ACCENT; abar.BorderSizePixel = 0; abar.Visible = false
+    local lbl = Instance.new("TextLabel", btn); lbl.Name = "TLbl"; lbl.Text = name
+    lbl.Size = UDim2.new(1,-12,1,0); lbl.Position = UDim2.new(0,12,0,0)
+    lbl.BackgroundTransparency = 1; lbl.TextColor3 = TEXTG
+    lbl.Font = Enum.Font.Gotham; lbl.TextSize = 11; lbl.TextXAlignment = Enum.TextXAlignment.Left
+    btn.MouseEnter:Connect(function() if activeTab~=name then btn.BackgroundColor3 = Color3.fromRGB(44,44,44) end end)
+    btn.MouseLeave:Connect(function() if activeTab~=name then btn.BackgroundColor3 = SIDEBAR end end)
+    btn.MouseButton1Click:Connect(function() SwitchTab(name) end)
+
+    local page = Instance.new("ScrollingFrame", ContentArea)
+    page.Name = "Page_"..name; page.Size = UDim2.new(1,-2,1,0); page.Position = UDim2.new(0,2,0,0)
+    page.BackgroundTransparency = 1; page.BorderSizePixel = 0
+    page.ScrollBarThickness = 3; page.ScrollBarImageColor3 = ACCENT
+    page.CanvasSize = UDim2.new(0,0,0,0); page.AutomaticCanvasSize = Enum.AutomaticSize.Y; page.Visible = false
+    page.ZIndex = 7
+    local pl = Instance.new("UIListLayout", page)
+    pl.Padding = UDim.new(0,0); pl.FillDirection = Enum.FillDirection.Vertical; pl.SortOrder = Enum.SortOrder.LayoutOrder
+    Instance.new("UIPadding", page).PaddingTop = UDim.new(0,4)
+    tabPages[name] = page; tabBtns[name] = btn
+    return page
+end
+
+-- ════════════════════════════════════════
+--    UI HELPERS
+-- ════════════════════════════════════════
+local function MakeDivider(parent, lo)
+    local f = Instance.new("Frame", parent)
+    f.Size = UDim2.new(1,0,0,1); f.BackgroundColor3 = DIVIDER; f.BorderSizePixel = 0; f.LayoutOrder = lo
+    return f
+end
+
+local function MakeSecHeader(parent, text, lo)
+    local f = Instance.new("Frame", parent)
+    f.Size = UDim2.new(1,0,0,22); f.BackgroundTransparency = 1; f.BorderSizePixel = 0; f.LayoutOrder = lo
+    local l = Instance.new("TextLabel", f)
+    l.Text = text; l.Size = UDim2.new(1,-10,1,0); l.Position = UDim2.new(0,10,0,0)
+    l.BackgroundTransparency = 1; l.TextColor3 = TEXTD
+    l.Font = Enum.Font.Gotham; l.TextSize = 10; l.TextXAlignment = Enum.TextXAlignment.Left
+    return f
+end
+
+local function MakeRow(parent, lo, h)
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1,0,0,h or 48); row.BackgroundColor3 = ROW
+    row.BorderSizePixel = 0; row.LayoutOrder = lo; row.ZIndex = 8
+    local line = Instance.new("Frame", row)
+    line.Size = UDim2.new(1,0,0,1); line.Position = UDim2.new(0,0,1,-1)
+    line.BackgroundColor3 = DIVIDER; line.BorderSizePixel = 0
+    return row
+end
+
+-- Tombol kecil dengan warna custom
+local function MakeSmallBtn(parent, text, bgColor, xPos, yPos, w, h)
+    local btn = Instance.new("TextButton", parent)
+    btn.Text = text; btn.Size = UDim2.new(0,w or 44,0,h or 30)
+    btn.Position = xPos or UDim2.new(0,0,0,0)
+    btn.AnchorPoint = yPos or Vector2.new(0,0)
+    btn.BackgroundColor3 = bgColor; btn.TextColor3 = TEXTW
+    btn.Font = Enum.Font.GothamBold; btn.TextSize = 11; btn.BorderSizePixel = 0; btn.ZIndex = 9
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0,4)
+    local darker = Color3.fromRGB(
+        math.max(0, bgColor.R*255-30),
+        math.max(0, bgColor.G*255-30),
+        math.max(0, bgColor.B*255-30)
+    )
+    btn.MouseEnter:Connect(function() TweenService:Create(btn,TweenInfo.new(0.08),{BackgroundColor3=darker}):Play() end)
+    btn.MouseLeave:Connect(function() TweenService:Create(btn,TweenInfo.new(0.08),{BackgroundColor3=bgColor}):Play() end)
+    return btn
+end
+
+-- Input box inline (lebih besar untuk keyboard HP)
+local function MakeInlineInput(parent, placeholder, xPos, size)
+    local inp = Instance.new("TextBox", parent)
+    inp.PlaceholderText = placeholder or "..."
+    inp.Text = ""
+    inp.Size = size or UDim2.new(0,120,0,30)
+    inp.Position = xPos or UDim2.new(0,0,0,0)
+    inp.BackgroundColor3 = Color3.fromRGB(22,22,22)
+    inp.TextColor3 = TEXTW; inp.PlaceholderColor3 = TEXTD
+    inp.Font = Enum.Font.Gotham; inp.TextSize = 12
+    inp.BorderSizePixel = 0; inp.ClearTextOnFocus = false; inp.ZIndex = 9
+    Instance.new("UICorner", inp).CornerRadius = UDim.new(0,4)
+    local st = Instance.new("UIStroke", inp); st.Color = DIVIDER; st.Thickness = 1
+    return inp
+end
+
+-- ════════════════════════════════════════
+--    MAIN WAYPOINT TAB
+-- ════════════════════════════════════════
+local WPTab = NewTab("Waypoints", 1)
+
+-- State UI
+local selectedFolder = nil  -- index folder yang sedang dipilih
+
+-- Forward declare
+local RefreshFolderList
+local RefreshWaypointPanel
+
+-- ─── PANEL KIRI: FOLDER LIST ───
+-- (render di dalam WPTab scroll)
+
+-- Header + tombol buat folder baru
+local topRow = MakeRow(WPTab, 1, 46)
+topRow.BackgroundColor3 = Color3.fromRGB(28,28,28)
+
+local topLabel = Instance.new("TextLabel", topRow)
+topLabel.Text = "📁  Folders"; topLabel.Size = UDim2.new(0.55,0,1,0); topLabel.Position = UDim2.new(0,10,0,0)
+topLabel.BackgroundTransparency = 1; topLabel.TextColor3 = TEXTW
+topLabel.Font = Enum.Font.GothamBold; topLabel.TextSize = 11; topLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Input nama folder
+local folderInput = MakeInlineInput(topRow, "Nama folder...", UDim2.new(0,100,0.5,-11), UDim2.new(0,118,0,22))
+
+-- Tombol buat folder
+local addFolderBtn = MakeSmallBtn(topRow, "+ Folder", GREEN, UDim2.new(1,-70,0.5,-11), nil, 60, 22)
+
+-- Container folder list
+local FolderListContainer = Instance.new("Frame", WPTab)
+FolderListContainer.Name = "FolderList"
+FolderListContainer.Size = UDim2.new(1,0,0,0)
+FolderListContainer.BackgroundTransparency = 1
+FolderListContainer.BorderSizePixel = 0
+FolderListContainer.LayoutOrder = 2
+FolderListContainer.AutomaticSize = Enum.AutomaticSize.Y
+FolderListContainer.ZIndex = 8
+
+local FolderListLayout = Instance.new("UIListLayout", FolderListContainer)
+FolderListLayout.Padding = UDim.new(0,0)
+FolderListLayout.FillDirection = Enum.FillDirection.Vertical
+FolderListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- Divider antara folder list dan waypoint panel
+local midDivRow = Instance.new("Frame", WPTab)
+midDivRow.Size = UDim2.new(1,0,0,6); midDivRow.BackgroundColor3 = Color3.fromRGB(24,24,24)
+midDivRow.BorderSizePixel = 0; midDivRow.LayoutOrder = 3
+
+-- ─── PANEL BAWAH: WAYPOINT PANEL ───
+-- Header waypoint panel
+local wpHeaderRow = MakeRow(WPTab, 4, 46)
+wpHeaderRow.BackgroundColor3 = Color3.fromRGB(28,28,28)
+
+local wpHeaderLabel = Instance.new("TextLabel", wpHeaderRow)
+wpHeaderLabel.Text = "📍  Waypoints  —  pilih folder dulu"
+wpHeaderLabel.Size = UDim2.new(0.55,0,1,0); wpHeaderLabel.Position = UDim2.new(0,10,0,0)
+wpHeaderLabel.BackgroundTransparency = 1; wpHeaderLabel.TextColor3 = TEXTG
+wpHeaderLabel.Font = Enum.Font.GothamBold; wpHeaderLabel.TextSize = 11; wpHeaderLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Input nama waypoint
+local wpNameInput = MakeInlineInput(wpHeaderRow, "Nama waypoint...", UDim2.new(0,100,0.5,-11), UDim2.new(0,110,0,22))
+
+-- Tombol tambah waypoint
+local addWPBtn = MakeSmallBtn(wpHeaderRow, "+ WP", BLUE, UDim2.new(1,-58,0.5,-11), nil, 48, 22)
+
+-- Loop control row
+local loopRow = MakeRow(WPTab, 5, 36)
+loopRow.BackgroundColor3 = Color3.fromRGB(24,24,24)
+
+local loopLabel = Instance.new("TextLabel", loopRow)
+loopLabel.Text = "🔁  Loop TP"; loopLabel.Size = UDim2.new(0.3,0,1,0); loopLabel.Position = UDim2.new(0,10,0,0)
+loopLabel.BackgroundTransparency = 1; loopLabel.TextColor3 = TEXTG
+loopLabel.Font = Enum.Font.GothamSemibold; loopLabel.TextSize = 10; loopLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local loopStepLabel = Instance.new("TextLabel", loopRow)
+loopStepLabel.Text = "—"; loopStepLabel.Size = UDim2.new(0.25,0,1,0); loopStepLabel.Position = UDim2.new(0.3,0,0,0)
+loopStepLabel.BackgroundTransparency = 1; loopStepLabel.TextColor3 = GOLD
+loopStepLabel.Font = Enum.Font.GothamBold; loopStepLabel.TextSize = 10; loopStepLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+-- Delay input
+local delayLabel = Instance.new("TextLabel", loopRow)
+delayLabel.Text = "Delay(s):"; delayLabel.Size = UDim2.new(0,50,1,0); delayLabel.Position = UDim2.new(0.55,0,0,0)
+delayLabel.BackgroundTransparency = 1; delayLabel.TextColor3 = TEXTG
+delayLabel.Font = Enum.Font.Gotham; delayLabel.TextSize = 9; delayLabel.TextXAlignment = Enum.TextXAlignment.Right
+
+local delayInput = MakeInlineInput(loopRow, "3", UDim2.new(0.55,54,0.5,-10), UDim2.new(0,32,0,20))
+delayInput.Text = "3"
+
+local loopStartBtn = MakeSmallBtn(loopRow, "▶ Start", GREENDK, UDim2.new(1,-86,0.5,-11), nil, 38, 22)
+local loopStopBtn  = MakeSmallBtn(loopRow, "■ Stop",  ACCENT2, UDim2.new(1,-44,0.5,-11), nil, 38, 22)
+loopStopBtn.TextColor3 = TEXTW
+
+-- Waypoint list container
+local WPListContainer = Instance.new("Frame", WPTab)
+WPListContainer.Name = "WPList"
+WPListContainer.Size = UDim2.new(1,0,0,0)
+WPListContainer.BackgroundTransparency = 1
+WPListContainer.BorderSizePixel = 0
+WPListContainer.LayoutOrder = 6
+WPListContainer.AutomaticSize = Enum.AutomaticSize.Y
+WPListContainer.ZIndex = 8
+
+local WPListLayout = Instance.new("UIListLayout", WPListContainer)
+WPListLayout.Padding = UDim.new(0,0)
+WPListLayout.FillDirection = Enum.FillDirection.Vertical
+WPListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+-- ════════════════════════════════════════
+--    REFRESH FUNCTIONS
+-- ════════════════════════════════════════
+
+-- ─── Refresh waypoint list untuk folder terpilih ───
+RefreshWaypointPanel = function()
+    -- Bersihkan
+    for _, c in ipairs(WPListContainer:GetChildren()) do
+        if not c:IsA("UIListLayout") then c:Destroy() end
+    end
+
+    if not selectedFolder or not Folders[selectedFolder] then
+        wpHeaderLabel.Text = "📍  Waypoints  —  pilih folder dulu"
+        wpHeaderLabel.TextColor3 = TEXTG
+        return
+    end
+
+    local folder = Folders[selectedFolder]
+    wpHeaderLabel.Text = "📍  " .. folder.name
+    wpHeaderLabel.TextColor3 = TEXTW
+
+    -- Update delay input sesuai folder
+    delayInput.Text = tostring(folder.loopDelay or 3)
+
+    local wps = folder.waypoints
+    if #wps == 0 then
+        -- Placeholder
+        local empty = Instance.new("Frame", WPListContainer)
+        empty.Size = UDim2.new(1,0,0,34); empty.BackgroundColor3 = ROWALT
+        empty.BorderSizePixel = 0; empty.LayoutOrder = 1
+        local el = Instance.new("TextLabel", empty)
+        el.Text = "Belum ada waypoint di folder ini"
+        el.Size = UDim2.new(1,0,1,0); el.BackgroundTransparency = 1
+        el.TextColor3 = TEXTD; el.Font = Enum.Font.Gotham; el.TextSize = 10
+        return
+    end
+
+    for i, wp in ipairs(wps) do
+        local wrow = Instance.new("Frame", WPListContainer)
+        wrow.Name = "WP_"..i; wrow.Size = UDim2.new(1,0,0,36)
+        wrow.BackgroundColor3 = (i%2==0) and ROWALT or ROW
+        wrow.BorderSizePixel = 0; wrow.LayoutOrder = i; wrow.ZIndex = 8
+
+        local wline = Instance.new("Frame", wrow)
+        wline.Size = UDim2.new(1,0,0,1); wline.Position = UDim2.new(0,0,1,-1)
+        wline.BackgroundColor3 = DIVIDER; wline.BorderSizePixel = 0
+
+        -- Nomor urut
+        local numL = Instance.new("TextLabel", wrow)
+        numL.Text = tostring(i)
+        numL.Size = UDim2.new(0,24,1,0); numL.Position = UDim2.new(0,0,0,0)
+        numL.BackgroundTransparency = 1; numL.TextColor3 = TEXTD
+        numL.Font = Enum.Font.GothamBold; numL.TextSize = 10; numL.TextXAlignment = Enum.TextXAlignment.Center
+
+        -- Garis vertikal
+        local numDiv = Instance.new("Frame", wrow)
+        numDiv.Size = UDim2.new(0,1,0.6,0); numDiv.Position = UDim2.new(0,24,0.2,0)
+        numDiv.BackgroundColor3 = DIVIDER; numDiv.BorderSizePixel = 0
+
+        -- Nama WP
+        local wl = Instance.new("TextLabel", wrow)
+        wl.Text = "📍 " .. wp.name
+        wl.Size = UDim2.new(1,-140,1,0); wl.Position = UDim2.new(0,30,0,0)
+        wl.BackgroundTransparency = 1; wl.TextColor3 = TEXTW
+        wl.Font = Enum.Font.Gotham; wl.TextSize = 11; wl.TextXAlignment = Enum.TextXAlignment.Left
+
+        -- Koordinat ringkas
+        local coordL = Instance.new("TextLabel", wrow)
+        coordL.Text = string.format("%.0f, %.0f, %.0f", wp.x, wp.y, wp.z)
+        coordL.Size = UDim2.new(1,-140,0,14); coordL.Position = UDim2.new(0,30,1,-16)
+        -- override wl size
+        wl.Size = UDim2.new(1,-140,0,18); wl.Position = UDim2.new(0,30,0,4)
+        coordL.BackgroundTransparency = 1; coordL.TextColor3 = TEXTD
+        coordL.Font = Enum.Font.Gotham; coordL.TextSize = 9; coordL.TextXAlignment = Enum.TextXAlignment.Left
+
+        -- TP button
+        local tpB = MakeSmallBtn(wrow, "TP", BLUEDK, UDim2.new(1,-132,0.5,-11), nil, 36, 22)
+        tpB.MouseButton1Click:Connect(function()
+            TeleportTo(wp.x, wp.y, wp.z)
+        end)
+
+        -- Up button (naik urutan)
+        local upB = MakeSmallBtn(wrow, "▲", Color3.fromRGB(70,70,70), UDim2.new(1,-92,0.5,-11), nil, 22, 22)
+        upB.TextSize = 9
+        upB.MouseButton1Click:Connect(function()
+            if i > 1 then
+                folder.waypoints[i], folder.waypoints[i-1] = folder.waypoints[i-1], folder.waypoints[i]
+                RefreshWaypointPanel()
+                SaveData()
+            end
+        end)
+
+        -- Down button (turun urutan)
+        local dnB = MakeSmallBtn(wrow, "▼", Color3.fromRGB(70,70,70), UDim2.new(1,-68,0.5,-11), nil, 22, 22)
+        dnB.TextSize = 9
+        dnB.MouseButton1Click:Connect(function()
+            if i < #folder.waypoints then
+                folder.waypoints[i], folder.waypoints[i+1] = folder.waypoints[i+1], folder.waypoints[i]
+                RefreshWaypointPanel()
+                SaveData()
+            end
+        end)
+
+        -- Delete button
+        local delB = MakeSmallBtn(wrow, "✕", ACCENT2, UDim2.new(1,-42,0.5,-11), nil, 36, 22)
+        delB.MouseButton1Click:Connect(function()
+            table.remove(folder.waypoints, i)
+            RefreshWaypointPanel()
+            SaveData()
+        end)
+
+        -- Hover
+        local hBtn = Instance.new("TextButton", wrow)
+        hBtn.Size = UDim2.new(1,0,1,0); hBtn.BackgroundTransparency = 1; hBtn.Text = ""; hBtn.ZIndex = 7
+        hBtn.MouseEnter:Connect(function()
+            TweenService:Create(wrow,TweenInfo.new(0.08),{BackgroundColor3=Color3.fromRGB(42,42,42)}):Play()
+        end)
+        hBtn.MouseLeave:Connect(function()
+            TweenService:Create(wrow,TweenInfo.new(0.08),{BackgroundColor3=(i%2==0) and ROWALT or ROW}):Play()
+        end)
+    end
+end
+-- ─── Refresh folder list ───
+RefreshFolderList = function()
+    for _, c in ipairs(FolderListContainer:GetChildren()) do
+        if not c:IsA("UIListLayout") then c:Destroy() end
+    end
+
+    if #Folders == 0 then
+        local empty = Instance.new("Frame", FolderListContainer)
+        empty.Size = UDim2.new(1,0,0,30); empty.BackgroundColor3 = ROWALT
+        empty.BorderSizePixel = 0; empty.LayoutOrder = 1
+        local el = Instance.new("TextLabel", empty)
+        el.Text = "Belum ada folder — buat folder dulu"
+        el.Size = UDim2.new(1,0,1,0); el.BackgroundTransparency = 1
+        el.TextColor3 = TEXTD; el.Font = Enum.Font.Gotham; el.TextSize = 10
+        return
+    end
+
+    for i, folder in ipairs(Folders) do
+        local frow = Instance.new("Frame", FolderListContainer)
+        frow.Name = "Folder_"..i; frow.Size = UDim2.new(1,0,0,34)
+        frow.BorderSizePixel = 0; frow.LayoutOrder = i; frow.ZIndex = 8
+
+        -- Highlight jika dipilih
+        local isSelected = (selectedFolder == i)
+        frow.BackgroundColor3 = isSelected and Color3.fromRGB(44,44,44) or ROW
+
+        local fline = Instance.new("Frame", frow)
+        fline.Size = UDim2.new(1,0,0,1); fline.Position = UDim2.new(0,0,1,-1)
+        fline.BackgroundColor3 = DIVIDER; fline.BorderSizePixel = 0
+
+        -- Accent strip kiri jika dipilih
+        local selBar = Instance.new("Frame", frow)
+        selBar.Size = UDim2.new(0,3,0.7,0); selBar.Position = UDim2.new(0,0,0.15,0)
+        selBar.BackgroundColor3 = GOLD; selBar.BorderSizePixel = 0
+        selBar.Visible = isSelected
+
+        -- Nomor folder
+        local numL = Instance.new("TextLabel", frow)
+        numL.Text = tostring(i)
+        numL.Size = UDim2.new(0,20,1,0); numL.Position = UDim2.new(0,6,0,0)
+        numL.BackgroundTransparency = 1; numL.TextColor3 = TEXTD
+        numL.Font = Enum.Font.GothamBold; numL.TextSize = 9; numL.TextXAlignment = Enum.TextXAlignment.Center
+
+        -- Icon & nama folder
+        local ficon = Instance.new("TextLabel", frow)
+        ficon.Text = "📁 " .. folder.name
+        ficon.Size = UDim2.new(1,-90,1,0); ficon.Position = UDim2.new(0,28,0,0)
+        ficon.BackgroundTransparency = 1
+        ficon.TextColor3 = isSelected and GOLD or TEXTW
+        ficon.Font = isSelected and Enum.Font.GothamSemibold or Enum.Font.Gotham
+        ficon.TextSize = 11; ficon.TextXAlignment = Enum.TextXAlignment.Left
+
+        -- Jumlah waypoint
+        local wcount = Instance.new("TextLabel", frow)
+        wcount.Text = tostring(#folder.waypoints) .. " WP"
+        wcount.Size = UDim2.new(0,30,1,0); wcount.Position = UDim2.new(1,-86,0,0)
+        wcount.BackgroundTransparency = 1; wcount.TextColor3 = TEXTD
+        wcount.Font = Enum.Font.Gotham; wcount.TextSize = 9; wcount.TextXAlignment = Enum.TextXAlignment.Right
+
+        -- Loop indicator
+        local loopInd = Instance.new("TextLabel", frow)
+        loopInd.Text = folder.loopActive and "🔁" or ""
+        loopInd.Size = UDim2.new(0,20,1,0); loopInd.Position = UDim2.new(1,-54,0,0)
+        loopInd.BackgroundTransparency = 1; loopInd.TextColor3 = GREEN
+        loopInd.Font = Enum.Font.Gotham; loopInd.TextSize = 11; loopInd.TextXAlignment = Enum.TextXAlignment.Center
+
+        -- Hapus folder button
+        local delFBtn = MakeSmallBtn(frow, "✕", ACCENT2, UDim2.new(1,-30,0.5,-10), nil, 24, 20)
+        delFBtn.MouseButton1Click:Connect(function()
+            -- Stop loop dulu
+            StopLoop(i)
+            -- Kalau folder yang dihapus sedang dipilih, reset selectedFolder
+            if selectedFolder == i then
+                selectedFolder = nil
+                RefreshWaypointPanel()
+            elseif selectedFolder and selectedFolder > i then
+                selectedFolder = selectedFolder - 1
+            end
+            table.remove(Folders, i)
+            RefreshFolderList()
+            SaveData()
+        end)
+
+        -- Klik row = pilih folder
+        local selBtn = Instance.new("TextButton", frow)
+        selBtn.Size = UDim2.new(1,-30,1,0); selBtn.BackgroundTransparency = 1; selBtn.Text = ""; selBtn.ZIndex = 9
+        selBtn.MouseButton1Click:Connect(function()
+            selectedFolder = i
+            RefreshFolderList()
+            RefreshWaypointPanel()
+        end)
+
+        -- Hover
+        selBtn.MouseEnter:Connect(function()
+            if selectedFolder ~= i then
+                TweenService:Create(frow,TweenInfo.new(0.08),{BackgroundColor3=Color3.fromRGB(40,40,40)}):Play()
+            end
+        end)
+        selBtn.MouseLeave:Connect(function()
+            if selectedFolder ~= i then
+                TweenService:Create(frow,TweenInfo.new(0.08),{BackgroundColor3=ROW}):Play()
+            end
+        end)
+    end
+end
+-- ════════════════════════════════════════
+--    BUTTON CALLBACKS
+-- ════════════════════════════════════════
+
+-- ─── Buat folder baru ───
+addFolderBtn.MouseButton1Click:Connect(function()
+    local name = folderInput.Text
+    if name == "" then return end
+    table.insert(Folders, {
+        name       = name,
+        waypoints  = {},
+        loopActive = false,
+        loopDelay  = 3,
+    })
+    folderInput.Text = ""
+    RefreshFolderList()
+    SaveData()
+end)
+
+-- ─── Tambah waypoint ke folder terpilih ───
+addWPBtn.MouseButton1Click:Connect(function()
+    if not selectedFolder or not Folders[selectedFolder] then return end
+    local name = wpNameInput.Text
+    if name == "" then return end
+    local x, y, z = GetCurrentPos()
+    table.insert(Folders[selectedFolder].waypoints, {
+        name = name,
+        x    = math.floor(x),
+        y    = math.floor(y),
+        z    = math.floor(z),
+    })
+    wpNameInput.Text = ""
+    RefreshFolderList()   -- update WP count di folder row
+    RefreshWaypointPanel()
+    SaveData()
+end)
+
+-- ─── Loop Start ───
+loopStartBtn.MouseButton1Click:Connect(function()
+    if not selectedFolder or not Folders[selectedFolder] then return end
+    local folder = Folders[selectedFolder]
+    if #folder.waypoints < 2 then return end
+
+    -- Baca delay dari input
+    local delay = tonumber(delayInput.Text) or 3
+    delay = math.clamp(delay, 0.5, 60)
+    folder.loopDelay = delay
+
+    local currentStepIdx = 0
+
+    StartLoop(selectedFolder, function(stepIdx)
+        currentStepIdx = stepIdx
+        -- Update label step di UI
+        local wp = folder.waypoints[stepIdx]
+        if wp then
+            loopStepLabel.Text = "→ " .. stepIdx .. "/" .. #folder.waypoints .. "  " .. wp.name
+        end
+        -- Update loop indicator di folder list
+        RefreshFolderList()
+    end)
+
+    loopStepLabel.Text = "▶ Running..."
+    RefreshFolderList()
+end)
+
+-- ─── Loop Stop ───
+loopStopBtn.MouseButton1Click:Connect(function()
+    if not selectedFolder then return end
+    StopLoop(selectedFolder)
+    loopStepLabel.Text = "—"
+    RefreshFolderList()
+end)
+
+-- ════════════════════════════════════════
+--    SETTINGS TAB
+-- ════════════════════════════════════════
+local SettingsTab = NewTab("Settings", 2)
+
+MakeSecHeader(SettingsTab, "DATA", 1)
+
+local saveRow = MakeRow(SettingsTab, 2, 38)
+local saveLbl = Instance.new("TextLabel", saveRow)
+saveLbl.Text = "Manual Save sekarang"
+saveLbl.Size = UDim2.new(0.6,0,1,0); saveLbl.Position = UDim2.new(0,10,0,0)
+saveLbl.BackgroundTransparency = 1; saveLbl.TextColor3 = TEXTW
+saveLbl.Font = Enum.Font.Gotham; saveLbl.TextSize = 11; saveLbl.TextXAlignment = Enum.TextXAlignment.Left
+local manualSaveBtn = MakeSmallBtn(saveRow, "💾 Save", GREENDK, UDim2.new(1,-80,0.5,-11), nil, 70, 22)
+manualSaveBtn.MouseButton1Click:Connect(function()
+    SaveData()
+    SaveStatusL.Text = "💾 Tersimpan!"
+    SaveStatusL.TextColor3 = GREEN
+    task.delay(2, function()
+        SaveStatusL.Text = canSaveFile and "💾 Auto-save (file)" or "💾 Auto-save (sesi)"
+        SaveStatusL.TextColor3 = TEXTG
+    end)
+end)
+
+local clearRow = MakeRow(SettingsTab, 3, 38)
+local clearLbl = Instance.new("TextLabel", clearRow)
+clearLbl.Text = "Hapus SEMUA data"
+clearLbl.Size = UDim2.new(0.6,0,1,0); clearLbl.Position = UDim2.new(0,10,0,0)
+clearLbl.BackgroundTransparency = 1; clearLbl.TextColor3 = TEXTW
+clearLbl.Font = Enum.Font.Gotham; clearLbl.TextSize = 11; clearLbl.TextXAlignment = Enum.TextXAlignment.Left
+local clearBtn = MakeSmallBtn(clearRow, "🗑 Hapus", ACCENT2, UDim2.new(1,-80,0.5,-11), nil, 70, 22)
+clearBtn.MouseButton1Click:Connect(function()
+    -- Stop semua loop
+    for i in pairs(loopThreads) do StopLoop(i) end
+    Folders = {}
+    selectedFolder = nil
+    RefreshFolderList()
+    RefreshWaypointPanel()
+    SaveData()
+end)
+
+MakeSecHeader(SettingsTab, "INFO", 4)
+local infoRow = MakeRow(SettingsTab, 5, 90)
+local infoL = Instance.new("TextLabel", infoRow)
+local saveType = canSaveFile and "writefile (file lokal)" or "in-memory (sesi ini saja)"
+infoL.Text = "G = Toggle GUI\n\nAuto-save: " .. saveType .. "\nFile: K4TSS_Waypoints.json\nAuto-save tiap 30 detik.\nSave manual tersedia di atas."
+infoL.Size = UDim2.new(1,-10,1,0); infoL.Position = UDim2.new(0,10,0,6)
+infoL.BackgroundTransparency = 1; infoL.TextColor3 = TEXTG
+infoL.Font = Enum.Font.Gotham; infoL.TextSize = 10; infoL.TextXAlignment = Enum.TextXAlignment.Left
+infoL.TextYAlignment = Enum.TextYAlignment.Top
+
+-- ════════════════════════════════════════
+--    HOTKEY G = TOGGLE GUI
+-- ════════════════════════════════════════
+local guiOpen = true
+UserInputService.InputBegan:Connect(function(input, proc)
+    if proc then return end
+    if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+    if input.KeyCode == Enum.KeyCode.G then
+        if Dialog.Visible then return end
+        guiOpen = not guiOpen
+        if guiOpen then
+            Window.Visible = true; Body.Visible = not minimized
+            TweenService:Create(Window,TweenInfo.new(0.2,Enum.EasingStyle.Quint),{Size=SIZE_NORMAL}):Play()
+        else
+            TweenService:Create(Window,TweenInfo.new(0.2,Enum.EasingStyle.Quint),{Size=UDim2.new(0,540,0,0)}):Play()
+            task.wait(0.22); Window.Visible = false
+        end
+    end
+end)
+
+-- ─── INIT ───
+SwitchTab("Waypoints")
+RefreshFolderList()
+RefreshWaypointPanel()
+
+-- Notify
+task.spawn(function()
+    task.wait(0.5)
+    pcall(function()
+        local saveMsg = canSaveFile and "Auto-save aktif (file)." or "Auto-save: in-memory."
+        StarterGui:SetCore("SendNotification", {
+            Title    = "K4TSS V2.0",
+            Text     = "Waypoint Hub loaded! " .. saveMsg,
+            Duration = 5,
+        })
+    end)
+end)
+
+print("[K4TSS V2.0] Waypoint Hub Loaded! | G = Toggle GUI")
