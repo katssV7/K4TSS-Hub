@@ -1713,10 +1713,10 @@ RefreshWaypointPanel()
 task.spawn(function()
     task.wait(0.5)
     pcall(function()
-        local saveMsg = canSaveFile and "Script Universal by K4TSS (file)." or "Script Universal by K4TSS."
+        local saveMsg = canSaveFile and "Auto-save aktif (file)." or "Auto-save: in-memory."
         StarterGui:SetCore("SendNotification", {
             Title    = "K4TSS V2.0",
-            Text     = "Hub loaded! " .. saveMsg,
+            Text     = "Waypoint Hub loaded! " .. saveMsg,
             Duration = 5,
         })
     end)
