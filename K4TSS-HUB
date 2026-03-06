@@ -140,14 +140,14 @@ local function StopAllBring()
     end
 end
 
--- Bring sekali: teleport HRP player target ke posisi kita + sedikit offset
+-- Bring sekali: teleport HRP player target tepat ke posisi kita
 local function BringOnce(player)
     local myHRP = GetHRP()
     if not myHRP then return false end
     local char = player.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    hrp.CFrame = myHRP.CFrame * CFrame.new(2, 0, 0)
+    hrp.CFrame = CFrame.new(myHRP.Position.X, myHRP.Position.Y, myHRP.Position.Z)
     return true
 end
 
@@ -891,25 +891,19 @@ local function RefreshPlayerList()
         pdisplay.Font = Enum.Font.Gotham; pdisplay.TextSize = 9
         pdisplay.TextXAlignment = Enum.TextXAlignment.Left
 
-        -- Cek apakah player punya karakter
-        local hasChar = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
         local isBringing = bringThreads[player.Name] ~= nil
 
-        -- Tombol TP ke player
+        -- Tombol TP ke player (selalu tampil "TP →", cek karakter saat diklik)
         local tpPlrBtn = MakeSmallBtn(
-            prow,
-            hasChar and "TP →" or "No Char",
-            hasChar and BLUEDK or Color3.fromRGB(55,55,55),
+            prow, "TP →", BLUEDK,
             UDim2.new(1,-130,0.5,-14), nil, 58, 24
         )
-        if not hasChar then tpPlrBtn.TextColor3 = TEXTD end
 
         tpPlrBtn.MouseButton1Click:Connect(function()
             local char = player.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             if hrp then
-                local pos = hrp.Position
-                TeleportTo(pos.X, pos.Y, pos.Z)
+                TeleportTo(hrp.Position.X, hrp.Position.Y, hrp.Position.Z)
             else
                 plrCountLabel.Text = "⚠ " .. player.Name .. " sedang respawn!"
                 plrCountLabel.TextColor3 = GOLD
@@ -938,11 +932,11 @@ local function RefreshPlayerList()
                 plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
                 plrCountLabel.TextColor3 = GREEN
             else
-                -- Cek karakter target
+                -- Cek karakter target saat diklik
                 local char = player.Character
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
                 if not hrp then
-                    plrCountLabel.Text = "⚠ " .. player.Name .. " tidak punya karakter!"
+                    plrCountLabel.Text = "⚠ " .. player.Name .. " sedang respawn!"
                     plrCountLabel.TextColor3 = GOLD
                     task.delay(2, function()
                         plrCountLabel.Text = "🟢  Ditemukan: " .. count .. " player"
