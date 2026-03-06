@@ -76,7 +76,9 @@ end
 
 local function TeleportTo(x, y, z)
     local hrp = GetHRP()
-    if hrp then hrp.CFrame = CFrame.new(x, y + 3, z) end
+    if hrp then
+        hrp.CFrame = CFrame.new(x, y, z)
+    end
 end
 
 local function GetCurrentPos()
@@ -844,7 +846,9 @@ local function RefreshPlayerList()
             local char = player.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             if hrp then
-                TeleportTo(hrp.Position.X, hrp.Position.Y, hrp.Position.Z)
+                -- Offset 4 studs ke samping agar tidak nabrak karakter target
+                local targetCF = hrp.CFrame * CFrame.new(4, 0, 0)
+                TeleportTo(targetCF.X, targetCF.Y - 3, targetCF.Z)
             else
                 plrCountLabel.Text = "⚠ " .. player.Name .. " sedang respawn!"
                 plrCountLabel.TextColor3 = GOLD
