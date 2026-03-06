@@ -140,18 +140,35 @@ local function StopAllBring()
     end
 end
 
--- Bring sekali: teleport HRP player target tepat ke posisi kita
+-- Bring sekali: pindahkan karakter player target ke posisi kita
+-- Di LocalScript kita bisa set CFrame HRP player lain karena
+-- physics ownership — ini bekerja di kebanyakan game
 local function BringOnce(player)
     local myHRP = GetHRP()
     if not myHRP then return false end
+
     local char = player.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not char then return false end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    hrp.CFrame = CFrame.new(myHRP.Position.X, myHRP.Position.Y, myHRP.Position.Z)
+
+    -- Posisi tepat di samping kita agar tidak tumpuk
+    local targetCFrame = myHRP.CFrame * CFrame.new(3, 0, 0)
+
+    -- Metode 1: set CFrame langsung (paling umum berhasil)
+    hrp.CFrame = targetCFrame
+
+    -- Metode 2: set Velocity ke 0 agar tidak melayang setelah di-bring
+    local vel = hrp:FindFirstChild("AssemblyLinearVelocity")
+    if hrp.AssemblyLinearVelocity then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+    end
+
     return true
 end
 
--- Bring loop: terus-menerus bring player agar tidak bisa kabur
+-- Bring loop: terus-menerus bring player setiap 0.1 detik
 local function StartBringLoop(player, onTick)
     StopBring(player.Name)
     bringThreads[player.Name] = task.spawn(function()
